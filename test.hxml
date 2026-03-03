@@ -1,0 +1,3 @@
+-main TestEncode
+-cp test
+--cpp test/bin

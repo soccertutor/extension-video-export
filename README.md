@@ -1,2 +1,88 @@
 # extension-video-export
-To be used in TM animation feature.
+
+Cross-platform H.264/MP4 video encoder for [OpenFL](https://www.openfl.org/) / hxcpp.
+
+Encode `BitmapData` frames into an MP4 file using native platform APIs — no external processes, no FFmpeg dependency.
+
+## Platform backends
+
+| Platform | Backend | Notes |
+|----------|---------|-------|
+| macOS / iOS | AVFoundation (AVAssetWriter) | BGRA direct |
+| Windows | Media Foundation (IMFSinkWriter) | BGRA direct |
+| Android | NDK AMediaCodec + AMediaMuxer | BGRA to NV12 |
+| Linux | OpenH264 + minimp4 | BGRA to I420 |
+
+## Installation
+
+```bash
+haxelib install extension-video-export
+```
+
+Then add the dependency to your `project.xml`:
+
+```xml
+<haxelib name="extension-video-export" />
+```
+
+## Usage
+
+```haxe
+import extension.videoexport.VideoEncoder;
+
+// Initialize encoder: output path, width, height, fps, bitrate
+VideoEncoder.init("output.mp4", 1280, 720, 30, 4000000);
+
+// Feed BGRA frames (matches OpenFL BitmapData layout)
+var bitmapData = getBitmapData();
+var pixels = bitmapData.getPixels(bitmapData.rect);
+VideoEncoder.addFrame(pixels.getData(), pixels.length);
+
+// Finalize and release resources
+VideoEncoder.finish();
+VideoEncoder.dispose();
+```
+
+### API
+
+| Method | Signature | Returns |
+|--------|-----------|---------|
+| `init` | `(path, width, height, fps, bitrate)` | `Bool` — true on success |
+| `addFrame` | `(bgraPixels, dataLength)` | `Bool` — true on success |
+| `finish` | `()` | `Bool` — true on success |
+| `dispose` | `()` | `Void` |
+| `getError` | `()` | `Null<String>` — last error message |
+
+All input must be **BGRA** pixel data. Single-instance, not thread-safe — call everything from the same thread.
+
+## Building from source
+
+### Prerequisites
+
+| Platform | Requirement |
+|----------|-------------|
+| macOS | Xcode (AVFoundation) |
+| Windows | MSVC (Media Foundation) |
+| Linux | `libopenh264-dev` |
+| Android | NDK r26c+ |
+
+### Build the NDLL
+
+```bash
+# Using lime (recommended for CI / cross-platform)
+haxelib run lime rebuild . mac -release
+
+# Using hxcpp directly (local development)
+cd project && haxelib run hxcpp Build.xml && cd ..
+```
+
+### Run tests
+
+```bash
+haxe test.hxml
+./test/bin/TestEncode
+```
+
+## License
+
+MIT

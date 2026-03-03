@@ -1,0 +1,75 @@
+<xml>
+	<include name="${HXCPP}/build-tool/BuildCommon.xml"/>
+
+	<set name="SRCDIR" value="${haxelib:extension-video-export}/project" />
+	<set name="NATIVE" value="${haxelib:extension-video-export}/native" />
+
+	<files id="common">
+		<file name="${SRCDIR}/common/ExternalInterface.cpp" />
+	</files>
+
+	<files id="apple">
+		<compilerflag value="-objc"/>
+		<file name="${NATIVE}/AVAssetWriterEncoder.mm" />
+	</files>
+
+	<files id="windows">
+		<file name="${NATIVE}/media_foundation_encoder.cpp" />
+	</files>
+
+	<files id="android">
+		<file name="${NATIVE}/mediacodec_encoder.cpp" />
+	</files>
+
+	<files id="linux">
+		<file name="${NATIVE}/openh264_minimp4_encoder.c">
+			<compilerflag value="-I${NATIVE}"/>
+		</file>
+	</files>
+
+	<set name="SLIBEXT" value=".lib" if="windows"/>
+	<set name="SLIBEXT" value=".a" unless="windows"/>
+	<set name="SLIBEXT" value=".so" if="webos"/>
+
+	<set name="DEBUGEXTRA" value="-debug" if="fulldebug" />
+
+	<target id="NDLL" output="${LIBPREFIX}extension_video_export${DEBUGEXTRA}${LIBEXTRA}" tool="linker" toolid="${STD_MODULE_LINK}">
+		<outdir name="../ndll/${BINDIR}" />
+		<ext value=".ndll" if="windows || macos || linux" />
+		<files id="common" />
+
+		<section if="macos || iphoneos || iphonesim">
+			<files id="apple" />
+			<vflag name="-framework" value="AVFoundation" />
+			<vflag name="-framework" value="CoreMedia" />
+			<vflag name="-framework" value="CoreVideo" />
+			<section unless="MACOSX_DEPLOYMENT_TARGET">
+				<setenv name="MACOSX_DEPLOYMENT_TARGET" value="10.12" unless="HXCPP_ARM64"/>
+				<setenv name="MACOSX_DEPLOYMENT_TARGET" value="11.7" if="HXCPP_ARM64" />
+			</section>
+		</section>
+
+		<section if="windows">
+			<files id="windows" />
+			<lib name="mfplat.lib" />
+			<lib name="mfreadwrite.lib" />
+			<lib name="mf.lib" />
+			<lib name="mfuuid.lib" />
+			<lib name="ole32.lib" />
+		</section>
+
+		<section if="android">
+			<files id="android" />
+			<lib name="-lmediandk" />
+		</section>
+
+		<section if="linux">
+			<files id="linux" />
+			<lib name="-lopenh264" />
+		</section>
+	</target>
+
+	<target id="default">
+		<target id="NDLL" />
+	</target>
+</xml>

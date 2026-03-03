@@ -1,0 +1,8 @@
+# Build artifacts
+ndll/
+project/obj/
+test/bin/
+
+# IDE / OS
+.dev
+.DS_Store

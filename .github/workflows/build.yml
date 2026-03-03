@@ -1,0 +1,134 @@
+name: Build & Publish
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: mac
+            runner: macos-13
+            flags: "-64 -release"
+            ndll_dir: Mac64
+          - target: mac
+            runner: macos-14
+            flags: "-release"
+            ndll_dir: MacArm64
+          - target: windows
+            runner: windows-latest
+            flags: "-64 -release"
+            ndll_dir: Windows64
+          - target: linux
+            runner: ubuntu-latest
+            flags: "-64 -release"
+            ndll_dir: Linux64
+          - target: android
+            runner: ubuntu-latest
+            flags: "-release"
+            ndll_dir: Android
+          - target: ios
+            runner: macos-14
+            flags: "-release"
+            ndll_dir: iPhone
+
+    runs-on: ${{ matrix.runner }}
+    name: ${{ matrix.target }} (${{ matrix.runner }})
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: krdlab/setup-haxe@v1
+        with:
+          haxe-version: 4.3.4
+
+      - name: Cache haxelib
+        uses: actions/cache@v4
+        with:
+          path: ~/haxelib
+          key: haxelib-${{ matrix.target }}-${{ hashFiles('haxelib.json') }}
+          restore-keys: haxelib-${{ matrix.target }}-
+
+      - name: Install Haxe dependencies
+        run: |
+          haxelib setup ~/haxelib
+          haxelib install hxcpp --quiet
+          haxelib install lime --quiet
+          haxelib dev extension-video-export .
+
+      - name: Install libopenh264 (Linux)
+        if: matrix.target == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y libopenh264-dev
+
+      - name: Setup Android NDK
+        if: matrix.target == 'android'
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26c
+
+      - name: Setup JDK (Android)
+        if: matrix.target == 'android'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Build NDLL
+        run: haxelib run lime rebuild . ${{ matrix.target }} ${{ matrix.flags }}
+
+      - name: Compile functional test
+        if: matrix.target != 'android' && matrix.target != 'ios'
+        run: haxe test.hxml
+
+      - name: Run functional test
+        if: matrix.target != 'android' && matrix.target != 'ios'
+        run: ./test/bin/TestEncode
+        shell: bash
+
+      - name: Upload NDLL artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.ndll_dir }}
+          path: ndll/${{ matrix.ndll_dir }}/
+          retention-days: 5
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: krdlab/setup-haxe@v1
+        with:
+          haxe-version: 4.3.4
+
+      - name: Download all NDLL artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ndll/
+
+      - name: Show NDLL layout
+        run: find ndll/ -type f | head -50
+
+      - name: Submit to haxelib
+        run: |
+          zip -r extension-video-export.zip . \
+            -x ".github/**" -x ".git/**" -x "project/obj/**" -x "test/**" -x "test.hxml"
+          haxelib submit extension-video-export.zip ${{ secrets.HAXELIB_PASSWORD }}
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create ${{ github.ref_name }} \
+            extension-video-export.zip \
+            --title "${{ github.ref_name }}" \
+            --generate-notes
