@@ -184,6 +184,24 @@ static HRESULT createSampleFromBGRA(const unsigned char *bgraPixels, int width, 
 
 extern "C" {
 
+static void releaseResources(void) {
+    safeRelease(&_writer);
+    _width = 0;
+    _height = 0;
+    _fps = 0;
+    _frameIndex = 0;
+    _streamIndex = 0;
+
+    if (_mfStarted) {
+        MFShutdown();
+        _mfStarted = FALSE;
+    }
+    if (_comInitialized) {
+        CoUninitialize();
+        _comInitialized = FALSE;
+    }
+}
+
 int videoEncoderInit(const char *outputPath, int width, int height, int fps, int bitrate) {
     clearError();
 
@@ -340,24 +358,6 @@ int videoEncoderFinish(void) {
     }
 
     return 0;
-}
-
-static void releaseResources(void) {
-    safeRelease(&_writer);
-    _width = 0;
-    _height = 0;
-    _fps = 0;
-    _frameIndex = 0;
-    _streamIndex = 0;
-
-    if (_mfStarted) {
-        MFShutdown();
-        _mfStarted = FALSE;
-    }
-    if (_comInitialized) {
-        CoUninitialize();
-        _comInitialized = FALSE;
-    }
 }
 
 void videoEncoderDispose(void) {

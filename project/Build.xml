@@ -33,7 +33,7 @@
 
 	<set name="DEBUGEXTRA" value="-debug" if="fulldebug" />
 
-	<target id="NDLL" output="${LIBPREFIX}extension_video_export${DEBUGEXTRA}${LIBEXTRA}" tool="linker" toolid="${STD_MODULE_LINK}">
+	<target id="NDLL" output="${LIBPREFIX}extension_video_export${DEBUGEXTRA}" tool="linker" toolid="${STD_MODULE_LINK}">
 		<outdir name="../ndll/${BINDIR}" />
 		<ext value=".ndll" if="windows || macos || linux" />
 		<files id="common" />
