@@ -21,6 +21,7 @@ jobs:
             runner: macos-15
             flags: "-arm64 -release"
             ndll_dir: MacArm64
+            haxe_extra: "-D HXCPP_ARM64"
           - target: windows
             runner: windows-latest
             flags: "-64 -release"
