@@ -14,27 +14,25 @@ jobs:
       matrix:
         include:
           - target: mac
-            runner: macos-13
-            flags: "-64 -release"
-            ndll_dir: Mac64
-          - target: mac
-            runner: macos-14
+            runner: macos-15
             flags: "-release"
             ndll_dir: MacArm64
           - target: windows
             runner: windows-latest
             flags: "-64 -release"
             ndll_dir: Windows64
+            haxe_extra: "-D HXCPP_M64"
           - target: linux
             runner: ubuntu-latest
             flags: "-64 -release"
             ndll_dir: Linux64
+            haxe_extra: "-D HXCPP_M64"
           - target: android
             runner: ubuntu-latest
             flags: "-release"
             ndll_dir: Android
           - target: ios
-            runner: macos-14
+            runner: macos-15
             flags: "-release"
             ndll_dir: iPhone
 
@@ -44,7 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: krdlab/setup-haxe@v1
+      - uses: krdlab/setup-haxe@v2
         with:
           haxe-version: 4.3.4
 
@@ -67,6 +65,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libopenh264-dev
 
       - name: Setup Android NDK
+        id: setup-ndk
         if: matrix.target == 'android'
         uses: nttld/setup-ndk@v1
         with:
@@ -79,12 +78,19 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      - name: Configure Lime for Android
+        if: matrix.target == 'android'
+        run: |
+          haxelib run lime config ANDROID_SDK $ANDROID_SDK_ROOT
+          haxelib run lime config ANDROID_NDK_ROOT ${{ steps.setup-ndk.outputs.ndk-path }}
+          haxelib run lime config JAVA_HOME $JAVA_HOME
+
       - name: Build NDLL
         run: haxelib run lime rebuild . ${{ matrix.target }} ${{ matrix.flags }}
 
       - name: Compile functional test
         if: matrix.target != 'android' && matrix.target != 'ios'
-        run: haxe test.hxml
+        run: haxe test.hxml ${{ matrix.haxe_extra }}
 
       - name: Run functional test
         if: matrix.target != 'android' && matrix.target != 'ios'
@@ -106,7 +112,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: krdlab/setup-haxe@v1
+      - uses: krdlab/setup-haxe@v2
         with:
           haxe-version: 4.3.4
 
