@@ -78,12 +78,19 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      - name: Install hxcpp with NDK r26c support (Android)
+        if: matrix.target == 'android'
+        run: |
+          curl -sL -o /tmp/hxcpp.zip https://github.com/HaxeFoundation/hxcpp/releases/download/v4.3.45/hxcpp-4.3.45.zip
+          haxelib install /tmp/hxcpp.zip --quiet
+
       - name: Configure Lime for Android
         if: matrix.target == 'android'
         run: |
           haxelib run lime config ANDROID_SDK $ANDROID_SDK_ROOT
           haxelib run lime config ANDROID_NDK_ROOT ${{ steps.setup-ndk.outputs.ndk-path }}
           haxelib run lime config JAVA_HOME $JAVA_HOME
+          haxelib run lime config ANDROID_SETUP true
 
       - name: Build NDLL
         run: haxelib run lime rebuild . ${{ matrix.target }} ${{ matrix.flags }}
