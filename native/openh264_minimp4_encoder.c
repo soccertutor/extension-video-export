@@ -311,16 +311,17 @@ void videoEncoderDispose(void) {
         g_i420Buf = NULL;
     }
 
-    /* Close file if still open (e.g., dispose without finish) */
+    /* Close muxer before file — MP4E_close flushes via write callback */
+    if (g_mux) {
+        mp4_h26x_write_close(&g_mp4Writer);
+        MP4E_close(g_mux);
+        g_mux = NULL;
+    }
+
+    /* Close file after muxer is done writing */
     if (g_outputFile) {
         fclose(g_outputFile);
         g_outputFile = NULL;
-    }
-
-    /* Close muxer if still open */
-    if (g_mux) {
-        MP4E_close(g_mux);
-        g_mux = NULL;
     }
 
     g_width = 0;

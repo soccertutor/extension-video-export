@@ -164,7 +164,12 @@ static int drainEncoder(bool endOfStream) {
                 muxInfo.size = info.size;
                 muxInfo.presentationTimeUs = info.presentationTimeUs;
                 muxInfo.flags = info.flags;
-                AMediaMuxer_writeSampleData(_muxer, _muxerTrackIndex, outBuf + info.offset, &muxInfo);
+                const media_status_t st = AMediaMuxer_writeSampleData(_muxer, _muxerTrackIndex, outBuf + info.offset, &muxInfo);
+                if (st != AMEDIA_OK) {
+                    AMediaCodec_releaseOutputBuffer(_codec, (size_t)outputIdx, false);
+                    setError("AMediaMuxer_writeSampleData failed: %d", (int)st);
+                    return -1;
+                }
             }
         }
 
@@ -180,10 +185,17 @@ static int drainEncoder(bool endOfStream) {
 // Public C API
 // ---------------------------------------------------------------------------
 
+static void releaseResources(void);
+
 extern "C" {
 
 int videoEncoderInit(const char *outputPath, int width, int height, int fps, int bitrate) {
     clearError();
+
+    if (width <= 0 || height <= 0 || fps <= 0 || bitrate <= 0) {
+        setError("Invalid encoder parameters");
+        return -1;
+    }
 
     // Open output file descriptor for muxer
     _muxerFd = open(outputPath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
@@ -269,6 +281,7 @@ int videoEncoderAddFrame(const unsigned char *bgraPixels, int dataLength) {
     uint8_t *inputBuf = AMediaCodec_getInputBuffer(_codec, (size_t)inputIdx, &inputSize);
     if (!inputBuf) {
         setError("getInputBuffer returned NULL");
+        AMediaCodec_queueInputBuffer(_codec, (size_t)inputIdx, 0, 0, 0, 0);
         return -1;
     }
 
@@ -276,8 +289,7 @@ int videoEncoderAddFrame(const unsigned char *bgraPixels, int dataLength) {
     int nv12Size = _width * _height * 3 / 2;
     if ((int)inputSize < nv12Size) {
         setError("Input buffer too small: %zu < %d", inputSize, nv12Size);
-        AMediaCodec_queueInputBuffer(_codec, (size_t)inputIdx, 0, 0, 0,
-                                      AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM);
+        AMediaCodec_queueInputBuffer(_codec, (size_t)inputIdx, 0, 0, 0, 0);
         return -1;
     }
 

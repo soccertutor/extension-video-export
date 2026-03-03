@@ -15,7 +15,11 @@ jobs:
         include:
           - target: mac
             runner: macos-15
-            flags: "-release"
+            flags: "-64 -release"
+            ndll_dir: Mac64
+          - target: mac
+            runner: macos-15
+            flags: "-arm64 -release"
             ndll_dir: MacArm64
           - target: windows
             runner: windows-latest

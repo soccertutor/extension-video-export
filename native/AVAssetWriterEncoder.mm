@@ -41,6 +41,11 @@ int videoEncoderInit(const char *outputPath, int width, int height, int fps, int
     @autoreleasepool {
         clearError();
 
+        if (width <= 0 || height <= 0 || fps <= 0 || bitrate <= 0) {
+            setError(@"Invalid encoder parameters");
+            return -1;
+        }
+
         // Remove existing file
         NSString *path = [NSString stringWithUTF8String:outputPath];
         NSFileManager *fm = [NSFileManager defaultManager];
@@ -204,6 +209,7 @@ int videoEncoderFinish(void) {
 
 void videoEncoderDispose(void) {
     @autoreleasepool {
+        if (_writer && _writer.status == AVAssetWriterStatusWriting) [_writer cancelWriting];
         _adaptor = nil;
         _writerInput = nil;
         _writer = nil;

@@ -205,6 +205,11 @@ static void releaseResources(void) {
 int videoEncoderInit(const char *outputPath, int width, int height, int fps, int bitrate) {
     clearError();
 
+    if (width <= 0 || height <= 0 || fps <= 0 || bitrate <= 0) {
+        setError("Invalid encoder parameters");
+        return -1;
+    }
+
     // Initialize COM
     HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
     if (SUCCEEDED(hr) || hr == S_FALSE) {
