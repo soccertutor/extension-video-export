@@ -44,7 +44,7 @@
 			<vflag name="-framework" value="CoreMedia" />
 			<vflag name="-framework" value="CoreVideo" />
 			<section unless="MACOSX_DEPLOYMENT_TARGET">
-				<setenv name="MACOSX_DEPLOYMENT_TARGET" value="10.12" unless="HXCPP_ARM64"/>
+				<setenv name="MACOSX_DEPLOYMENT_TARGET" value="10.13" unless="HXCPP_ARM64"/>
 				<setenv name="MACOSX_DEPLOYMENT_TARGET" value="11.7" if="HXCPP_ARM64" />
 			</section>
 		</section>

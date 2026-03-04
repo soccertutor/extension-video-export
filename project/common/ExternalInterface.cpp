@@ -9,11 +9,11 @@
 #include <hx/CFFIPrime.h>
 
 extern "C" {
-	int videoEncoderInit(const char *outputPath, int width, int height, int fps, int bitrate);
-	int videoEncoderAddFrame(const unsigned char *bgraPixels, int dataLength);
-	int videoEncoderFinish(void);
-	void videoEncoderDispose(void);
-	const char *videoEncoderGetError(void);
+int videoEncoderInit(const char *outputPath, int width, int height, int fps, int bitrate);
+int videoEncoderAddFrame(const unsigned char *bgraPixels, int dataLength);
+int videoEncoderFinish(void);
+void videoEncoderDispose(void);
+const char *videoEncoderGetError(void);
 }
 
 int ve_init(const char *path, int w, int h, int fps, int br) {

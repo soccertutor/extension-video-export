@@ -1,0 +1,29 @@
+CompileFlags:
+  Add:
+    - -Wno-macro-redefined
+
+Index:
+  Background: Build
+
+Diagnostics:
+  UnusedIncludes: None
+  MissingIncludes: None
+
+Hover:
+  ShowAKA: true
+
+InlayHints:
+  Enabled: false
+
+Completion:
+  AllScopes: true
+---
+If:
+  PathMatch: [.*\.cpp, .*\.mm, .*\.h]
+CompileFlags:
+  Add: [-std=c++17]
+---
+If:
+  PathMatch: [.*\.c]
+CompileFlags:
+  Add: [-std=c11]

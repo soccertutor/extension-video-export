@@ -3,11 +3,35 @@ name: Build & Publish
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
 jobs:
+  detect-release:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    outputs:
+      is_release: ${{ steps.check.outputs.is_release }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Check version change
+        id: check
+        run: |
+          set -euo pipefail
+          NEW=$(jq -r .version haxelib.json)
+          OLD=$(git show HEAD~1:haxelib.json 2>/dev/null | jq -r .version) || OLD="0.0.0"
+          if [ "$NEW" != "$OLD" ]; then
+            echo "is_release=true" >> "$GITHUB_OUTPUT"
+            echo "version=$NEW" >> "$GITHUB_OUTPUT"
+            echo "Version changed: $OLD → $NEW"
+          else
+            echo "is_release=false" >> "$GITHUB_OUTPUT"
+            echo "Version unchanged: $NEW"
+          fi
+
   build:
     strategy:
       fail-fast: false
@@ -117,9 +141,13 @@ jobs:
           retention-days: 5
 
   publish:
-    needs: build
+    needs: [detect-release, build]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: needs.detect-release.outputs.is_release == 'true'
+    permissions:
+      contents: write
+    env:
+      TAG: v${{ needs.detect-release.outputs.version }}
 
     steps:
       - uses: actions/checkout@v4
@@ -136,17 +164,25 @@ jobs:
       - name: Show NDLL layout
         run: find ndll/ -type f | head -50
 
+      - name: Create git tag
+        run: |
+          git tag "$TAG" 2>/dev/null || true
+          git push origin "$TAG"
+
       - name: Submit to haxelib
         run: |
           zip -r extension-video-export.zip . \
-            -x ".github/**" -x ".git/**" -x "project/obj/**" -x "test/**" -x "test.hxml"
+            -x ".git/**" -x ".github/**" -x "project/obj/**" \
+            -x ".gitignore" -x ".clang-format" -x ".clang-format-ignore" \
+            -x ".clang-tidy" -x ".clangd" -x ".editorconfig" -x "hxformat.json" \
+            -x "test/**" -x "test.hxml"
           haxelib submit extension-video-export.zip ${{ secrets.HAXELIB_PASSWORD }}
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create ${{ github.ref_name }} \
+          gh release create "$TAG" \
             extension-video-export.zip \
-            --title "${{ github.ref_name }}" \
+            --title "$TAG" \
             --generate-notes

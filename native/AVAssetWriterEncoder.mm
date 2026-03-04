@@ -1,3 +1,11 @@
+/**
+ * Video encoder: AVFoundation AVAssetWriter (H.264/MP4).
+ * Used on macOS and iOS where AVFoundation is available.
+ *
+ * Single-instance, single-threaded design. All state is held in static globals.
+ * Input: BGRA pixel data (matches OpenFL native BitmapData). Output: H.264/MP4 file.
+ */
+
 #import <AVFoundation/AVFoundation.h>
 #import <CoreMedia/CoreMedia.h>
 #import <CoreVideo/CoreVideo.h>
@@ -9,26 +17,26 @@
 static const int ERROR_BUF_SIZE = 512;
 static const int BYTES_PER_PIXEL = 4;  // BGRA
 
-static AVAssetWriter *_writer = nil;
-static AVAssetWriterInput *_writerInput = nil;
-static AVAssetWriterInputPixelBufferAdaptor *_adaptor = nil;
-static int _width = 0;
-static int _height = 0;
-static int _fps = 0;
-static int _frameIndex = 0;
-static char _errorBuf[ERROR_BUF_SIZE] = {0};
+static AVAssetWriter *writer_ = nil;
+static AVAssetWriterInput *writer_input_ = nil;
+static AVAssetWriterInputPixelBufferAdaptor *adaptor_ = nil;
+static int width_ = 0;
+static int height_ = 0;
+static int fps_ = 0;
+static int frame_index_ = 0;
+static char error_buf_[ERROR_BUF_SIZE] = {0};
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 static void setError(NSString *message) {
-    const char *utf8 = [message UTF8String];
-    strlcpy(_errorBuf, utf8, ERROR_BUF_SIZE);
+	const char *utf8 = [message UTF8String];
+	strlcpy(error_buf_, utf8, ERROR_BUF_SIZE);
 }
 
 static void clearError(void) {
-    _errorBuf[0] = '\0';
+	error_buf_[0] = '\0';
 }
 
 // ---------------------------------------------------------------------------
@@ -38,191 +46,188 @@ static void clearError(void) {
 extern "C" {
 
 int videoEncoderInit(const char *outputPath, int width, int height, int fps, int bitrate) {
-    @autoreleasepool {
-        clearError();
+	@autoreleasepool {
+		clearError();
 
-        if (width <= 0 || height <= 0 || fps <= 0 || bitrate <= 0) {
-            setError(@"Invalid encoder parameters");
-            return -1;
-        }
+		if (width <= 0 || height <= 0 || fps <= 0 || bitrate <= 0) {
+			setError(@"Invalid encoder parameters");
+			return -1;
+		}
 
-        // Remove existing file
-        NSString *path = [NSString stringWithUTF8String:outputPath];
-        NSFileManager *fm = [NSFileManager defaultManager];
-        if ([fm fileExistsAtPath:path]) [fm removeItemAtPath:path error:nil];
+		// Remove existing file
+		NSString *path = [NSString stringWithUTF8String:outputPath];
+		NSFileManager *fm = [NSFileManager defaultManager];
+		if ([fm fileExistsAtPath:path]) [fm removeItemAtPath:path error:nil];
 
-        NSURL *url = [NSURL fileURLWithPath:path];
+		NSURL *url = [NSURL fileURLWithPath:path];
 
-        // Create asset writer
-        NSError *error = nil;
-        _writer = [[AVAssetWriter alloc] initWithURL:url fileType:AVFileTypeMPEG4 error:&error];
-        if (!_writer) {
-            setError([NSString stringWithFormat:@"AVAssetWriter init failed: %@", error.localizedDescription]);
-            return -1;
-        }
+		// Create asset writer
+		NSError *error = nil;
+		writer_ = [[AVAssetWriter alloc] initWithURL:url fileType:AVFileTypeMPEG4 error:&error];
+		if (!writer_) {
+			setError([NSString stringWithFormat:@"AVAssetWriter init failed: %@", error.localizedDescription]);
+			return -1;
+		}
 
-        // H.264 output settings with requested bitrate
-        NSDictionary *videoSettings = @{
-            AVVideoCodecKey: AVVideoCodecTypeH264,
-            AVVideoWidthKey: @(width),
-            AVVideoHeightKey: @(height),
-            AVVideoCompressionPropertiesKey: @{
-                AVVideoAverageBitRateKey: @(bitrate),
-                AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
-                AVVideoExpectedSourceFrameRateKey: @(fps)
-            }
-        };
+		// H.264 output settings with requested bitrate
+		NSDictionary *videoSettings = @{
+			AVVideoCodecKey : AVVideoCodecTypeH264,
+			AVVideoWidthKey : @(width),
+			AVVideoHeightKey : @(height),
+			AVVideoCompressionPropertiesKey : @{
+				AVVideoAverageBitRateKey : @(bitrate),
+				AVVideoProfileLevelKey : AVVideoProfileLevelH264HighAutoLevel,
+				AVVideoExpectedSourceFrameRateKey : @(fps)
+			}
+		};
 
-        _writerInput = [[AVAssetWriterInput alloc] initWithMediaType:AVMediaTypeVideo
-                                                      outputSettings:videoSettings];
-        _writerInput.expectsMediaDataInRealTime = NO;
+		writer_input_ = [[AVAssetWriterInput alloc] initWithMediaType:AVMediaTypeVideo outputSettings:videoSettings];
+		writer_input_.expectsMediaDataInRealTime = NO;
 
-        // Pixel buffer adaptor — BGRA matches OpenFL native BitmapData
-        NSDictionary *bufferAttributes = @{
-            (NSString *)kCVPixelBufferPixelFormatTypeKey: @(kCVPixelFormatType_32BGRA),
-            (NSString *)kCVPixelBufferWidthKey: @(width),
-            (NSString *)kCVPixelBufferHeightKey: @(height)
-        };
+		// Pixel buffer adaptor — BGRA matches OpenFL native BitmapData
+		NSDictionary *bufferAttributes = @{
+			(NSString *)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA),
+			(NSString *)kCVPixelBufferWidthKey : @(width),
+			(NSString *)kCVPixelBufferHeightKey : @(height)
+		};
 
-        _adaptor = [[AVAssetWriterInputPixelBufferAdaptor alloc]
-            initWithAssetWriterInput:_writerInput
-            sourcePixelBufferAttributes:bufferAttributes];
+		adaptor_ = [[AVAssetWriterInputPixelBufferAdaptor alloc] initWithAssetWriterInput:writer_input_
+															  sourcePixelBufferAttributes:bufferAttributes];
 
-        if (![_writer canAddInput:_writerInput]) {
-            setError(@"Cannot add writer input to AVAssetWriter");
-            _writer = nil;
-            _writerInput = nil;
-            _adaptor = nil;
-            return -1;
-        }
+		if (![writer_ canAddInput:writer_input_]) {
+			setError(@"Cannot add writer input to AVAssetWriter");
+			writer_ = nil;
+			writer_input_ = nil;
+			adaptor_ = nil;
+			return -1;
+		}
 
-        [_writer addInput:_writerInput];
+		[writer_ addInput:writer_input_];
 
-        if (![_writer startWriting]) {
-            setError([NSString stringWithFormat:@"startWriting failed: %@", _writer.error.localizedDescription]);
-            _writer = nil;
-            _writerInput = nil;
-            _adaptor = nil;
-            return -1;
-        }
+		if (![writer_ startWriting]) {
+			setError([NSString stringWithFormat:@"startWriting failed: %@", writer_.error.localizedDescription]);
+			writer_ = nil;
+			writer_input_ = nil;
+			adaptor_ = nil;
+			return -1;
+		}
 
-        [_writer startSessionAtSourceTime:kCMTimeZero];
+		[writer_ startSessionAtSourceTime:kCMTimeZero];
 
-        _width = width;
-        _height = height;
-        _fps = fps;
-        _frameIndex = 0;
+		width_ = width;
+		height_ = height;
+		fps_ = fps;
+		frame_index_ = 0;
 
-        return 0;
-    }
+		return 0;
+	}
 }
 
 int videoEncoderAddFrame(const unsigned char *bgraPixels, int dataLength) {
-    @autoreleasepool {
-        clearError();
+	@autoreleasepool {
+		clearError();
 
-        if (!_writer || !_adaptor) {
-            setError(@"Encoder not initialized");
-            return -1;
-        }
+		if (!writer_ || !adaptor_) {
+			setError(@"Encoder not initialized");
+			return -1;
+		}
 
-        int expectedLength = _width * _height * BYTES_PER_PIXEL;
-        if (dataLength != expectedLength) {
-            setError([NSString stringWithFormat:@"Data length mismatch: %d != %d", dataLength, expectedLength]);
-            return -1;
-        }
+		int expectedLength = width_ * height_ * BYTES_PER_PIXEL;
+		if (dataLength != expectedLength) {
+			setError([NSString stringWithFormat:@"Data length mismatch: %d != %d", dataLength, expectedLength]);
+			return -1;
+		}
 
-        // Wait until the input is ready to accept more data (5s timeout)
-        int waitRetries = 0;
-        while (!_writerInput.isReadyForMoreMediaData) {
-            [NSThread sleepForTimeInterval:0.005];
-            if (++waitRetries > 1000) {
-                setError(@"Timed out waiting for writer input to become ready");
-                return -1;
-            }
-        }
+		// Wait until the input is ready to accept more data (5s timeout)
+		int waitRetries = 0;
+		while (!writer_input_.isReadyForMoreMediaData) {
+			[NSThread sleepForTimeInterval:0.005];
+			if (++waitRetries > 1000) {
+				setError(@"Timed out waiting for writer input to become ready");
+				return -1;
+			}
+		}
 
-        // Create CVPixelBuffer wrapping the caller's BGRA data — no copy
-        CVPixelBufferRef pixelBuffer = NULL;
-        CVReturn status = CVPixelBufferCreateWithBytes(
-            kCFAllocatorDefault,
-            _width,
-            _height,
-            kCVPixelFormatType_32BGRA,
-            (void *)bgraPixels,
-            _width * BYTES_PER_PIXEL,
-            NULL,  // no release callback — caller owns the data
-            NULL,
-            NULL,  // no pixel buffer attributes needed for temporary buffer
-            &pixelBuffer
-        );
+		// Create CVPixelBuffer wrapping the caller's BGRA data — no copy
+		CVPixelBufferRef pixelBuffer = NULL;
+		CVReturn status = CVPixelBufferCreateWithBytes(
+			kCFAllocatorDefault,
+			width_,
+			height_,
+			kCVPixelFormatType_32BGRA,
+			(void *)bgraPixels,
+			width_ * BYTES_PER_PIXEL,
+			NULL,  // no release callback — caller owns the data
+			NULL,
+			NULL,  // no pixel buffer attributes needed for temporary buffer
+			&pixelBuffer
+		);
 
-        if (status != kCVReturnSuccess || !pixelBuffer) {
-            setError([NSString stringWithFormat:@"CVPixelBufferCreateWithBytes failed: %d", (int)status]);
-            return -1;
-        }
+		if (status != kCVReturnSuccess || !pixelBuffer) {
+			setError([NSString stringWithFormat:@"CVPixelBufferCreateWithBytes failed: %d", (int)status]);
+			return -1;
+		}
 
-        CMTime presentationTime = CMTimeMake(_frameIndex, _fps);
-        BOOL appended = [_adaptor appendPixelBuffer:pixelBuffer withPresentationTime:presentationTime];
-        CVPixelBufferRelease(pixelBuffer);
+		CMTime presentationTime = CMTimeMake(frame_index_, fps_);
+		BOOL appended = [adaptor_ appendPixelBuffer:pixelBuffer withPresentationTime:presentationTime];
+		CVPixelBufferRelease(pixelBuffer);
 
-        if (!appended) {
-            setError([NSString stringWithFormat:@"appendPixelBuffer failed at frame %d: %@",
-                _frameIndex, _writer.error.localizedDescription]);
-            return -1;
-        }
+		if (!appended) {
+			setError([NSString
+				stringWithFormat:@"appendPixelBuffer failed at frame %d: %@", frame_index_, writer_.error.localizedDescription]);
+			return -1;
+		}
 
-        _frameIndex++;
-        return 0;
-    }
+		frame_index_++;
+		return 0;
+	}
 }
 
 int videoEncoderFinish(void) {
-    @autoreleasepool {
-        clearError();
+	@autoreleasepool {
+		clearError();
 
-        if (!_writer) {
-            setError(@"Encoder not initialized");
-            return -1;
-        }
+		if (!writer_) {
+			setError(@"Encoder not initialized");
+			return -1;
+		}
 
-        [_writerInput markAsFinished];
+		[writer_input_ markAsFinished];
 
-        // Wait synchronously for finishWriting
-        dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
-        __block BOOL success = YES;
+		// Wait synchronously for finishWriting
+		dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+		__block BOOL success = YES;
 
-        [_writer finishWritingWithCompletionHandler:^{
-            if (_writer.status == AVAssetWriterStatusFailed) {
-                setError([NSString stringWithFormat:@"finishWriting failed: %@",
-                    _writer.error.localizedDescription]);
-                success = NO;
-            }
-            dispatch_semaphore_signal(semaphore);
-        }];
+		[writer_ finishWritingWithCompletionHandler:^{
+			if (writer_.status == AVAssetWriterStatusFailed) {
+				setError([NSString stringWithFormat:@"finishWriting failed: %@", writer_.error.localizedDescription]);
+				success = NO;
+			}
+			dispatch_semaphore_signal(semaphore);
+		}];
 
-        dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
+		dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
 
-        return success ? 0 : -1;
-    }
+		return success ? 0 : -1;
+	}
 }
 
 void videoEncoderDispose(void) {
-    @autoreleasepool {
-        if (_writer && _writer.status == AVAssetWriterStatusWriting) [_writer cancelWriting];
-        _adaptor = nil;
-        _writerInput = nil;
-        _writer = nil;
-        _width = 0;
-        _height = 0;
-        _fps = 0;
-        _frameIndex = 0;
-        clearError();
-    }
+	@autoreleasepool {
+		if (writer_ && writer_.status == AVAssetWriterStatusWriting) [writer_ cancelWriting];
+		adaptor_ = nil;
+		writer_input_ = nil;
+		writer_ = nil;
+		width_ = 0;
+		height_ = 0;
+		fps_ = 0;
+		frame_index_ = 0;
+		clearError();
+	}
 }
 
 const char *videoEncoderGetError(void) {
-    return _errorBuf[0] != '\0' ? _errorBuf : NULL;
+	return error_buf_[0] != '\0' ? error_buf_ : NULL;
 }
 
-} // extern "C"
+}  // extern "C"

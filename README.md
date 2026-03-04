@@ -13,6 +13,17 @@ Encode `BitmapData` frames into an MP4 file using native platform APIs — no ex
 | Android | NDK AMediaCodec + AMediaMuxer | BGRA to NV12 |
 | Linux | OpenH264 + minimp4 | BGRA to I420 |
 
+## Minimum platform versions
+
+| Platform | Minimum version | Limiting API |
+|----------|-----------------|--------------|
+| macOS (x64) | 10.13 High Sierra | `AVVideoCodecTypeH264` |
+| macOS (ARM64) | 11.7 Big Sur | First macOS on Apple Silicon |
+| iOS | 11.0 | `AVVideoCodecTypeH264` |
+| Windows | 7 | Media Foundation SinkWriter |
+| Android | API 21 (5.0 Lollipop) | NDK AMediaCodec / AMediaMuxer |
+| Linux | Any | Requires `libopenh264` at runtime |
+
 ## Installation
 
 ```bash
@@ -65,6 +76,14 @@ All input must be **BGRA** pixel data. Single-instance, not thread-safe — call
 | Windows | MSVC (Media Foundation) |
 | Linux | `libopenh264-dev` |
 | Android | NDK r26c+ |
+
+### IDE support (optional)
+
+For clangd-based IDEs (Zed, VS Code with clangd, Neovim LSP), create a symlink so the LSP can find hxcpp headers:
+
+```bash
+ln -sfn "$(haxelib path hxcpp | head -1)include" .hxcpp-include
+```
 
 ### Build the NDLL
 

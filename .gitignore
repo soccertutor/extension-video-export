@@ -6,3 +6,6 @@ test/bin/
 # IDE / OS
 .dev
 .DS_Store
+
+# Generated symlinks
+.hxcpp-include
