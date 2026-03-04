@@ -173,11 +173,9 @@ jobs:
 
       - name: Submit to haxelib
         run: |
-          zip -r extension-video-export.zip . \
-            -x ".git/**" -x ".github/**" -x "project/obj/**" \
-            -x ".gitignore" -x ".clang-format" -x ".clang-format-ignore" \
-            -x ".clang-tidy" -x ".clangd" -x ".editorconfig" -x "hxformat.json" \
-            -x "test/**" -x "test.hxml"
+          zip -r extension-video-export.zip \
+            haxelib.json include.xml README.md \
+            extension/ native/ project/ ndll/
           haxelib submit extension-video-export.zip soccertutor ${{ secrets.HAXELIB_PASSWORD }}
 
       - name: Create GitHub Release
