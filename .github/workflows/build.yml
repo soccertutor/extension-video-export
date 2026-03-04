@@ -38,10 +38,12 @@ jobs:
       matrix:
         include:
           - target: mac
+            label: mac-x64
             runner: macos-15
             flags: "-64 -release"
             ndll_dir: Mac64
           - target: mac
+            label: mac-arm64
             runner: macos-15
             flags: "-arm64 -release"
             ndll_dir: MacArm64
@@ -66,7 +68,7 @@ jobs:
             ndll_dir: iPhone
 
     runs-on: ${{ matrix.runner }}
-    name: ${{ matrix.target }} (${{ matrix.runner }})
+    name: ${{ matrix.label || matrix.target }} (${{ matrix.runner }})
 
     steps:
       - uses: actions/checkout@v4

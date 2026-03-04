@@ -71,7 +71,7 @@ int videoEncoderInit(const char *outputPath, int width, int height, int fps, int
 
 		// H.264 output settings with requested bitrate
 		NSDictionary *videoSettings = @{
-			AVVideoCodecKey : AVVideoCodecTypeH264,
+			AVVideoCodecKey : AVVideoCodecH264,
 			AVVideoWidthKey : @(width),
 			AVVideoHeightKey : @(height),
 			AVVideoCompressionPropertiesKey : @{
