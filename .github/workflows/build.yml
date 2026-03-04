@@ -178,7 +178,7 @@ jobs:
             -x ".gitignore" -x ".clang-format" -x ".clang-format-ignore" \
             -x ".clang-tidy" -x ".clangd" -x ".editorconfig" -x "hxformat.json" \
             -x "test/**" -x "test.hxml"
-          haxelib submit extension-video-export.zip ${{ secrets.HAXELIB_PASSWORD }}
+          haxelib submit extension-video-export.zip soccertutor ${{ secrets.HAXELIB_PASSWORD }}
 
       - name: Create GitHub Release
         env:
