@@ -1,5 +1,5 @@
 <xml>
-	<!-- Release optimizations: LTO (macOS/iOS/Windows/Android), dead-code strip (macOS/iOS/Linux) -->
+	<!-- Release optimizations: LTO (macOS/iOS/Windows/Android), dead-code strip (macOS/Linux) -->
 	<set name="HXCPP_OPTIMIZE_LINK" value="1" unless="debug || fulldebug"/>
 
 	<include name="${HXCPP}/build-tool/BuildCommon.xml"/>
@@ -50,7 +50,7 @@
 			<vflag name="-framework" value="AVFoundation" />
 			<vflag name="-framework" value="CoreMedia" />
 			<vflag name="-framework" value="CoreVideo" />
-			<lib name="-Wl,-dead_strip" unless="debug || fulldebug"/>
+			<lib name="-Wl,-dead_strip" if="macos" unless="debug || fulldebug"/>
 			<section unless="MACOSX_DEPLOYMENT_TARGET">
 				<setenv name="MACOSX_DEPLOYMENT_TARGET" value="10.13" unless="HXCPP_ARM64"/>
 				<setenv name="MACOSX_DEPLOYMENT_TARGET" value="11.7" if="HXCPP_ARM64" />

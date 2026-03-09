@@ -12,6 +12,7 @@
 #include <mfidl.h>
 #include <mfreadwrite.h>
 #include <mferror.h>
+#include <codecapi.h>
 #include <stdio.h>
 
 #pragma comment(lib, "mfplat.lib")
@@ -113,6 +114,14 @@ static HRESULT createOutputType(int width, int height, int fps, int bitrate, IMF
 	}
 
 	hr = MFSetAttributeRatio(pType, MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
+	if (FAILED(hr)) {
+		pType->Release();
+		return hr;
+	}
+
+	// High profile — matches AVVideoProfileLevelH264HighAutoLevel on macOS.
+	// Better compression: CABAC, 8x8 transform, custom quant matrices.
+	hr = pType->SetUINT32(MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_High);
 	if (FAILED(hr)) {
 		pType->Release();
 		return hr;
@@ -276,17 +285,15 @@ int videoEncoderInit(const char* outputPath, int width, int height, int fps, int
 	wchar_t* widePath = new wchar_t[wideLen];
 	MultiByteToWideChar(CP_UTF8, 0, outputPath, -1, widePath, wideLen);
 
-	// Create SinkWriter with MPEG4 container
+	// Create SinkWriter with hardware H.264 encoder
 	IMFAttributes* pAttributes = NULL;
 	hr = MFCreateAttributes(&pAttributes, 1);
-	if (SUCCEEDED(hr)) {
-		// Enable hardware transforms (MFT)
-		hr = pAttributes->SetUINT32(MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, TRUE);
-	}
+	if (SUCCEEDED(hr))
+		pAttributes->SetUINT32(MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, TRUE);
 
 	hr = MFCreateSinkWriterFromURL(widePath, NULL, pAttributes, &writer_);
-	delete[] widePath;
 	safeRelease(&pAttributes);
+	delete[] widePath;
 
 	if (FAILED(hr)) {
 		setErrorHR("MFCreateSinkWriterFromURL", hr);
