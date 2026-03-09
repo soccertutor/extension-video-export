@@ -11,6 +11,11 @@
 #include <string.h>
 #include <stdint.h>
 
+#if defined(__x86_64__) || defined(_M_X64)
+#define VE_USE_SSE2 1
+#include <emmintrin.h>
+#endif
+
 #include "wels/codec_api.h"
 
 #define MINIMP4_IMPLEMENTATION
@@ -21,6 +26,21 @@
 // ---------------------------------------------------------------------------
 
 #define ERROR_BUF_SIZE 512
+
+/* BT.601 color conversion coefficients */
+static const int COEFF_R_Y = 66;
+static const int COEFF_G_Y = 129;
+static const int COEFF_B_Y = 25;
+static const int COEFF_R_U = -38;
+static const int COEFF_G_U = -74;
+static const int COEFF_B_U = 112;
+static const int COEFF_R_V = 112;
+static const int COEFF_G_V = -94;
+static const int COEFF_B_V = -18;
+static const int Y_OFFSET = 16;
+static const int UV_OFFSET = 128;
+static const int ROUNDING_BIAS = 128;
+static const int UV_AVG_BIAS = 2;  // round-half-up for 2x2 averaging (>> 2)
 
 static char error_buf_[ERROR_BUF_SIZE] = {0};
 
@@ -61,6 +81,8 @@ static int mp4WriteCallback(int64_t offset, const void* buffer, size_t size, voi
 // BGRA → I420 conversion (BT.601)
 // ---------------------------------------------------------------------------
 
+#ifdef VE_USE_SSE2
+
 static void bgraToI420(const unsigned char* bgra, int width, int height, unsigned char* i420) {
 	const int yPlaneSize = width * height;
 	const int uvWidth = width / 2;
@@ -70,45 +92,202 @@ static void bgraToI420(const unsigned char* bgra, int width, int height, unsigne
 	unsigned char* uPlane = i420 + yPlaneSize;
 	unsigned char* vPlane = uPlane + uvWidth * uvHeight;
 
-	// Compute Y for every pixel
-	for (int row = 0; row < height; row++) {
+	/* Channel extraction masks for packed BGRA dwords */
+	const __m128i mask_b = _mm_set1_epi32(0x000000FF);
+	const __m128i mask_g = _mm_set1_epi32(0x0000FF00);
+	const __m128i mask_r = _mm_set1_epi32(0x00FF0000);
+
+	/* BT.601 Y coefficients */
+	const __m128i coeff_r_y = _mm_set1_epi16(COEFF_R_Y);
+	const __m128i coeff_g_y = _mm_set1_epi16(COEFF_G_Y);
+	const __m128i coeff_b_y = _mm_set1_epi16(COEFF_B_Y);
+	const __m128i bias_y = _mm_set1_epi16(ROUNDING_BIAS);
+	const __m128i offset_y = _mm_set1_epi16(Y_OFFSET);
+
+	/* Y plane: 8 pixels per SSE2 iteration */
+	int row, col;
+	for (row = 0; row < height; row++) {
 		const unsigned char* srcRow = bgra + row * width * 4;
 		unsigned char* yRow = yPlane + row * width;
-		for (int col = 0; col < width; col++) {
+		col = 0;
+
+		for (; col <= width - 8; col += 8) {
+			/* Load 4+4 BGRA pixels */
+			__m128i px0 = _mm_loadu_si128((const __m128i*)(srcRow + col * 4));
+			__m128i px1 = _mm_loadu_si128((const __m128i*)(srcRow + (col + 4) * 4));
+
+			/* Extract B, G, R channels to int16 */
+			__m128i b_16 = _mm_packs_epi32(_mm_and_si128(px0, mask_b), _mm_and_si128(px1, mask_b));
+			__m128i g_16 = _mm_packs_epi32(_mm_srli_epi32(_mm_and_si128(px0, mask_g), 8), _mm_srli_epi32(_mm_and_si128(px1, mask_g), 8));
+			__m128i r_16 = _mm_packs_epi32(_mm_srli_epi32(_mm_and_si128(px0, mask_r), 16), _mm_srli_epi32(_mm_and_si128(px1, mask_r), 16));
+
+			/* Y = ((66*R + 129*G + 25*B + 128) >> 8) + 16
+			 * Note: 129*255=32895 > int16 max, but mullo gives correct low 16 bits.
+			 * Sum max=56228 fits uint16. Use logical shift (srli) not arithmetic. */
+			__m128i y_val = _mm_mullo_epi16(r_16, coeff_r_y);
+			y_val = _mm_add_epi16(y_val, _mm_mullo_epi16(g_16, coeff_g_y));
+			y_val = _mm_add_epi16(y_val, _mm_mullo_epi16(b_16, coeff_b_y));
+			y_val = _mm_add_epi16(y_val, bias_y);
+			y_val = _mm_srli_epi16(y_val, 8);
+			y_val = _mm_add_epi16(y_val, offset_y);
+
+			/* Pack to uint8 and store 8 Y bytes */
+			_mm_storel_epi64((__m128i*)(yRow + col), _mm_packus_epi16(y_val, _mm_setzero_si128()));
+		}
+
+		for (; col < width; col++) {
 			const int idx = col * 4;
 			const int b = srcRow[idx];
 			const int g = srcRow[idx + 1];
 			const int r = srcRow[idx + 2];
-			yRow[col] = (unsigned char)(((66 * r + 129 * g + 25 * b + 128) >> 8) + 16);
+			yRow[col] = (unsigned char)(((COEFF_R_Y * r + COEFF_G_Y * g + COEFF_B_Y * b + ROUNDING_BIAS) >> 8) + Y_OFFSET);
 		}
 	}
 
-	// Compute U and V with 2x2 subsampling
-	for (int row = 0; row < uvHeight; row++) {
-		const int srcRow0 = row * 2;
-		const int srcRow1 = srcRow0 + 1;
-		const unsigned char* line0 = bgra + srcRow0 * width * 4;
-		const unsigned char* line1 = bgra + srcRow1 * width * 4;
+	/* UV plane: 8 UV pairs per SSE2 iteration */
+	const __m128i coeff_r_u = _mm_set1_epi16(COEFF_R_U);
+	const __m128i coeff_g_u = _mm_set1_epi16(COEFF_G_U);
+	const __m128i coeff_b_u = _mm_set1_epi16(COEFF_B_U);
+	const __m128i coeff_r_v = _mm_set1_epi16(COEFF_R_V);
+	const __m128i coeff_g_v = _mm_set1_epi16(COEFF_G_V);
+	const __m128i coeff_b_v = _mm_set1_epi16(COEFF_B_V);
+	const __m128i bias_uv = _mm_set1_epi16(ROUNDING_BIAS);
+	const __m128i offset_uv = _mm_set1_epi16(UV_OFFSET);
+	const __m128i ones = _mm_set1_epi16(1);
+	const __m128i two_32 = _mm_set1_epi32(UV_AVG_BIAS);
+
+	for (row = 0; row < uvHeight; row++) {
+		const unsigned char* line0 = bgra + (row * 2) * width * 4;
+		const unsigned char* line1 = bgra + (row * 2 + 1) * width * 4;
 		unsigned char* uRow = uPlane + row * uvWidth;
 		unsigned char* vRow = vPlane + row * uvWidth;
+		col = 0;
 
-		for (int col = 0; col < uvWidth; col++) {
-			const int col0 = col * 2;
-			const int col1 = col0 + 1;
+		/* 8 UV pairs = 16 source pixel columns = 4 loads per row */
+		for (; col <= uvWidth - 8; col += 8) {
+			const int srcOff = (col * 2) * 4;
 
-			// Average 2x2 block
-			const int off0 = col0 * 4;
-			const int off1 = col1 * 4;
+			/* Load 16 BGRA pixels from each row (4 groups of 4) */
+			__m128i r0a = _mm_loadu_si128((const __m128i*)(line0 + srcOff));
+			__m128i r0b = _mm_loadu_si128((const __m128i*)(line0 + srcOff + 16));
+			__m128i r0c = _mm_loadu_si128((const __m128i*)(line0 + srcOff + 32));
+			__m128i r0d = _mm_loadu_si128((const __m128i*)(line0 + srcOff + 48));
+			__m128i r1a = _mm_loadu_si128((const __m128i*)(line1 + srcOff));
+			__m128i r1b = _mm_loadu_si128((const __m128i*)(line1 + srcOff + 16));
+			__m128i r1c = _mm_loadu_si128((const __m128i*)(line1 + srcOff + 32));
+			__m128i r1d = _mm_loadu_si128((const __m128i*)(line1 + srcOff + 48));
 
-			const int r = (line0[off0 + 2] + line0[off1 + 2] + line1[off0 + 2] + line1[off1 + 2] + 2) >> 2;
-			const int g = (line0[off0 + 1] + line0[off1 + 1] + line1[off0 + 1] + line1[off1 + 1] + 2) >> 2;
-			const int b = (line0[off0] + line0[off1] + line1[off0] + line1[off1] + 2) >> 2;
+			/* Extract channels to int16, pack pairs of 4-pixel groups */
+			__m128i b_r0_lo = _mm_packs_epi32(_mm_and_si128(r0a, mask_b), _mm_and_si128(r0b, mask_b));
+			__m128i b_r0_hi = _mm_packs_epi32(_mm_and_si128(r0c, mask_b), _mm_and_si128(r0d, mask_b));
+			__m128i g_r0_lo = _mm_packs_epi32(_mm_srli_epi32(_mm_and_si128(r0a, mask_g), 8), _mm_srli_epi32(_mm_and_si128(r0b, mask_g), 8));
+			__m128i g_r0_hi = _mm_packs_epi32(_mm_srli_epi32(_mm_and_si128(r0c, mask_g), 8), _mm_srli_epi32(_mm_and_si128(r0d, mask_g), 8));
+			__m128i r_r0_lo =
+				_mm_packs_epi32(_mm_srli_epi32(_mm_and_si128(r0a, mask_r), 16), _mm_srli_epi32(_mm_and_si128(r0b, mask_r), 16));
+			__m128i r_r0_hi =
+				_mm_packs_epi32(_mm_srli_epi32(_mm_and_si128(r0c, mask_r), 16), _mm_srli_epi32(_mm_and_si128(r0d, mask_r), 16));
 
-			uRow[col] = (unsigned char)(((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128);
-			vRow[col] = (unsigned char)(((112 * r - 94 * g - 18 * b + 128) >> 8) + 128);
+			__m128i b_r1_lo = _mm_packs_epi32(_mm_and_si128(r1a, mask_b), _mm_and_si128(r1b, mask_b));
+			__m128i b_r1_hi = _mm_packs_epi32(_mm_and_si128(r1c, mask_b), _mm_and_si128(r1d, mask_b));
+			__m128i g_r1_lo = _mm_packs_epi32(_mm_srli_epi32(_mm_and_si128(r1a, mask_g), 8), _mm_srli_epi32(_mm_and_si128(r1b, mask_g), 8));
+			__m128i g_r1_hi = _mm_packs_epi32(_mm_srli_epi32(_mm_and_si128(r1c, mask_g), 8), _mm_srli_epi32(_mm_and_si128(r1d, mask_g), 8));
+			__m128i r_r1_lo =
+				_mm_packs_epi32(_mm_srli_epi32(_mm_and_si128(r1a, mask_r), 16), _mm_srli_epi32(_mm_and_si128(r1b, mask_r), 16));
+			__m128i r_r1_hi =
+				_mm_packs_epi32(_mm_srli_epi32(_mm_and_si128(r1c, mask_r), 16), _mm_srli_epi32(_mm_and_si128(r1d, mask_r), 16));
+
+			/* Horizontal pairwise add via madd trick: a[0]+a[1], a[2]+a[3], ... */
+			__m128i b_sum_lo = _mm_add_epi32(_mm_madd_epi16(b_r0_lo, ones), _mm_madd_epi16(b_r1_lo, ones));
+			__m128i b_sum_hi = _mm_add_epi32(_mm_madd_epi16(b_r0_hi, ones), _mm_madd_epi16(b_r1_hi, ones));
+			__m128i g_sum_lo = _mm_add_epi32(_mm_madd_epi16(g_r0_lo, ones), _mm_madd_epi16(g_r1_lo, ones));
+			__m128i g_sum_hi = _mm_add_epi32(_mm_madd_epi16(g_r0_hi, ones), _mm_madd_epi16(g_r1_hi, ones));
+			__m128i r_sum_lo = _mm_add_epi32(_mm_madd_epi16(r_r0_lo, ones), _mm_madd_epi16(r_r1_lo, ones));
+			__m128i r_sum_hi = _mm_add_epi32(_mm_madd_epi16(r_r0_hi, ones), _mm_madd_epi16(r_r1_hi, ones));
+
+			/* Average: (sum + 2) >> 2, pack back to int16 */
+			__m128i b_avg =
+				_mm_packs_epi32(_mm_srai_epi32(_mm_add_epi32(b_sum_lo, two_32), 2), _mm_srai_epi32(_mm_add_epi32(b_sum_hi, two_32), 2));
+			__m128i g_avg =
+				_mm_packs_epi32(_mm_srai_epi32(_mm_add_epi32(g_sum_lo, two_32), 2), _mm_srai_epi32(_mm_add_epi32(g_sum_hi, two_32), 2));
+			__m128i r_avg =
+				_mm_packs_epi32(_mm_srai_epi32(_mm_add_epi32(r_sum_lo, two_32), 2), _mm_srai_epi32(_mm_add_epi32(r_sum_hi, two_32), 2));
+
+			/* U = ((-38*R - 74*G + 112*B + 128) >> 8) + 128 */
+			__m128i u_val = _mm_mullo_epi16(r_avg, coeff_r_u);
+			u_val = _mm_add_epi16(u_val, _mm_mullo_epi16(g_avg, coeff_g_u));
+			u_val = _mm_add_epi16(u_val, _mm_mullo_epi16(b_avg, coeff_b_u));
+			u_val = _mm_add_epi16(u_val, bias_uv);
+			u_val = _mm_srai_epi16(u_val, 8);
+			u_val = _mm_add_epi16(u_val, offset_uv);
+
+			/* V = ((112*R - 94*G - 18*B + 128) >> 8) + 128 */
+			__m128i v_val = _mm_mullo_epi16(r_avg, coeff_r_v);
+			v_val = _mm_add_epi16(v_val, _mm_mullo_epi16(g_avg, coeff_g_v));
+			v_val = _mm_add_epi16(v_val, _mm_mullo_epi16(b_avg, coeff_b_v));
+			v_val = _mm_add_epi16(v_val, bias_uv);
+			v_val = _mm_srai_epi16(v_val, 8);
+			v_val = _mm_add_epi16(v_val, offset_uv);
+
+			/* Pack to uint8, store 8 U + 8 V bytes (planar I420) */
+			_mm_storel_epi64((__m128i*)(uRow + col), _mm_packus_epi16(u_val, _mm_setzero_si128()));
+			_mm_storel_epi64((__m128i*)(vRow + col), _mm_packus_epi16(v_val, _mm_setzero_si128()));
+		}
+
+		for (; col < uvWidth; col++) {
+			const int off0 = (col * 2) * 4;
+			const int off1 = (col * 2 + 1) * 4;
+			const int r = (line0[off0 + 2] + line0[off1 + 2] + line1[off0 + 2] + line1[off1 + 2] + UV_AVG_BIAS) >> 2;
+			const int g = (line0[off0 + 1] + line0[off1 + 1] + line1[off0 + 1] + line1[off1 + 1] + UV_AVG_BIAS) >> 2;
+			const int b = (line0[off0] + line0[off1] + line1[off0] + line1[off1] + UV_AVG_BIAS) >> 2;
+			uRow[col] = (unsigned char)(((COEFF_R_U * r + COEFF_G_U * g + COEFF_B_U * b + ROUNDING_BIAS) >> 8) + UV_OFFSET);
+			vRow[col] = (unsigned char)(((COEFF_R_V * r + COEFF_G_V * g + COEFF_B_V * b + ROUNDING_BIAS) >> 8) + UV_OFFSET);
 		}
 	}
 }
+
+#else /* !VE_USE_SSE2 — scalar fallback */
+
+static void bgraToI420(const unsigned char* bgra, int width, int height, unsigned char* i420) {
+	const int yPlaneSize = width * height;
+	const int uvWidth = width / 2;
+	const int uvHeight = height / 2;
+
+	unsigned char* yPlane = i420;
+	unsigned char* uPlane = i420 + yPlaneSize;
+	unsigned char* vPlane = uPlane + uvWidth * uvHeight;
+
+	int row, col;
+	for (row = 0; row < height; row++) {
+		const unsigned char* srcRow = bgra + row * width * 4;
+		unsigned char* yRow = yPlane + row * width;
+		for (col = 0; col < width; col++) {
+			const int idx = col * 4;
+			const int b = srcRow[idx];
+			const int g = srcRow[idx + 1];
+			const int r = srcRow[idx + 2];
+			yRow[col] = (unsigned char)(((COEFF_R_Y * r + COEFF_G_Y * g + COEFF_B_Y * b + ROUNDING_BIAS) >> 8) + Y_OFFSET);
+		}
+	}
+
+	for (row = 0; row < uvHeight; row++) {
+		const unsigned char* line0 = bgra + (row * 2) * width * 4;
+		const unsigned char* line1 = bgra + (row * 2 + 1) * width * 4;
+		unsigned char* uRow = uPlane + row * uvWidth;
+		unsigned char* vRow = vPlane + row * uvWidth;
+
+		for (col = 0; col < uvWidth; col++) {
+			const int off0 = (col * 2) * 4;
+			const int off1 = (col * 2 + 1) * 4;
+			const int r = (line0[off0 + 2] + line0[off1 + 2] + line1[off0 + 2] + line1[off1 + 2] + UV_AVG_BIAS) >> 2;
+			const int g = (line0[off0 + 1] + line0[off1 + 1] + line1[off0 + 1] + line1[off1 + 1] + UV_AVG_BIAS) >> 2;
+			const int b = (line0[off0] + line0[off1] + line1[off0] + line1[off1] + UV_AVG_BIAS) >> 2;
+			uRow[col] = (unsigned char)(((COEFF_R_U * r + COEFF_G_U * g + COEFF_B_U * b + ROUNDING_BIAS) >> 8) + UV_OFFSET);
+			vRow[col] = (unsigned char)(((COEFF_R_V * r + COEFF_G_V * g + COEFF_B_V * b + ROUNDING_BIAS) >> 8) + UV_OFFSET);
+		}
+	}
+}
+
+#endif /* VE_USE_SSE2 */
 
 // ---------------------------------------------------------------------------
 // Public API

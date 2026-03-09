@@ -1,4 +1,7 @@
 <xml>
+	<!-- Release optimizations: LTO (macOS/iOS/Windows/Android), dead-code strip (macOS/iOS/Linux) -->
+	<set name="HXCPP_OPTIMIZE_LINK" value="1" unless="debug || fulldebug"/>
+
 	<include name="${HXCPP}/build-tool/BuildCommon.xml"/>
 
 	<set name="SRCDIR" value="${haxelib:extension-video-export}/project" />
@@ -6,6 +9,8 @@
 
 	<files id="common">
 		<file name="${SRCDIR}/common/ExternalInterface.cpp" />
+		<compilerflag value="-ffunction-sections" if="linux" unless="debug || fulldebug"/>
+		<compilerflag value="-fdata-sections" if="linux" unless="debug || fulldebug"/>
 	</files>
 
 	<files id="apple">
@@ -25,6 +30,8 @@
 		<file name="${NATIVE}/openh264_minimp4_encoder.c">
 			<compilerflag value="-I${NATIVE}"/>
 		</file>
+		<compilerflag value="-ffunction-sections" unless="debug || fulldebug"/>
+		<compilerflag value="-fdata-sections" unless="debug || fulldebug"/>
 	</files>
 
 	<set name="SLIBEXT" value=".lib" if="windows"/>
@@ -43,6 +50,7 @@
 			<vflag name="-framework" value="AVFoundation" />
 			<vflag name="-framework" value="CoreMedia" />
 			<vflag name="-framework" value="CoreVideo" />
+			<lib name="-Wl,-dead_strip" unless="debug || fulldebug"/>
 			<section unless="MACOSX_DEPLOYMENT_TARGET">
 				<setenv name="MACOSX_DEPLOYMENT_TARGET" value="10.13" unless="HXCPP_ARM64"/>
 				<setenv name="MACOSX_DEPLOYMENT_TARGET" value="11.7" if="HXCPP_ARM64" />
@@ -66,6 +74,7 @@
 		<section if="linux">
 			<files id="linux" />
 			<lib name="-lopenh264" />
+			<lib name="-Wl,--gc-sections" unless="debug || fulldebug"/>
 		</section>
 	</target>
 

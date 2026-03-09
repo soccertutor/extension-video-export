@@ -18,6 +18,11 @@
 #include <string.h>
 #include <unistd.h>
 
+#if defined(__aarch64__) || defined(__ARM_NEON) || defined(__ARM_NEON__)
+#define VE_USE_NEON 1
+#include <arm_neon.h>
+#endif
+
 // ---------------------------------------------------------------------------
 // Static state
 // ---------------------------------------------------------------------------
@@ -28,6 +33,21 @@ static const int TIMEOUT_US = 10000;		  // 10ms dequeue timeout
 static const int INPUT_TIMEOUT_US = 1000000;  // 1s input buffer timeout
 static const int COLOR_FORMAT_NV12 = 21;	  // COLOR_FormatYUV420SemiPlanar
 static const char* const MIME_H264 = "video/avc";
+
+// BT.601 color conversion coefficients
+static const int COEFF_R_Y = 66;
+static const int COEFF_G_Y = 129;
+static const int COEFF_B_Y = 25;
+static const int COEFF_R_U = -38;
+static const int COEFF_G_U = -74;
+static const int COEFF_B_U = 112;
+static const int COEFF_R_V = 112;
+static const int COEFF_G_V = -94;
+static const int COEFF_B_V = -18;
+static const int Y_OFFSET = 16;
+static const int UV_OFFSET = 128;
+static const int ROUNDING_BIAS = 128;
+static const int UV_AVG_BIAS = 2;  // round-half-up for 2x2 averaging (>> 2)
 
 static AMediaCodec* codec_ = NULL;
 static AMediaMuxer* muxer_ = NULL;
@@ -61,13 +81,149 @@ static void clearError(void) {
 // NV12 layout: Y plane (w*h bytes), then interleaved UV plane (w*h/2 bytes).
 // BT.601 coefficients for SD/HD content.
 
+#ifdef VE_USE_NEON
+
 static void bgraToNV12(const unsigned char* bgra, unsigned char* nv12, int width, int height) {
 	const int frameSize = width * height;
 	const int stride = width * BYTES_PER_PIXEL;
 	unsigned char* yPlane = nv12;
 	unsigned char* uvPlane = nv12 + frameSize;
 
-	// Compute Y for every pixel
+	// NEON coefficient vectors for Y: ((66*R + 129*G + 25*B + 128) >> 8) + 16
+	const uint8x8_t coeff_r_y = vdup_n_u8(COEFF_R_Y);
+	const uint8x8_t coeff_g_y = vdup_n_u8(COEFF_G_Y);
+	const uint8x8_t coeff_b_y = vdup_n_u8(COEFF_B_Y);
+	const uint16x8_t bias_y = vdupq_n_u16(ROUNDING_BIAS);
+	const uint8x8_t offset_y = vdup_n_u8(Y_OFFSET);
+
+	// Y plane: 16 pixels per NEON iteration
+	for (int y = 0; y < height; y++) {
+		const unsigned char* row = bgra + y * stride;
+		unsigned char* yRow = yPlane + y * width;
+		int x = 0;
+
+		for (; x <= width - 16; x += 16) {
+			// Deinterleave BGRA: val[0]=B, val[1]=G, val[2]=R, val[3]=A
+			uint8x16x4_t px = vld4q_u8(row + x * BYTES_PER_PIXEL);
+			uint8x8_t b_lo = vget_low_u8(px.val[0]);
+			uint8x8_t b_hi = vget_high_u8(px.val[0]);
+			uint8x8_t g_lo = vget_low_u8(px.val[1]);
+			uint8x8_t g_hi = vget_high_u8(px.val[1]);
+			uint8x8_t r_lo = vget_low_u8(px.val[2]);
+			uint8x8_t r_hi = vget_high_u8(px.val[2]);
+
+			// Low 8: 66*R + 129*G + 25*B + 128
+			uint16x8_t y_lo = vmull_u8(r_lo, coeff_r_y);
+			y_lo = vmlal_u8(y_lo, g_lo, coeff_g_y);
+			y_lo = vmlal_u8(y_lo, b_lo, coeff_b_y);
+			y_lo = vaddq_u16(y_lo, bias_y);
+
+			// High 8: same
+			uint16x8_t y_hi = vmull_u8(r_hi, coeff_r_y);
+			y_hi = vmlal_u8(y_hi, g_hi, coeff_g_y);
+			y_hi = vmlal_u8(y_hi, b_hi, coeff_b_y);
+			y_hi = vaddq_u16(y_hi, bias_y);
+
+			// >>8, narrow to u8, +16
+			uint8x8_t res_lo = vadd_u8(vshrn_n_u16(y_lo, 8), offset_y);
+			uint8x8_t res_hi = vadd_u8(vshrn_n_u16(y_hi, 8), offset_y);
+
+			vst1q_u8(yRow + x, vcombine_u8(res_lo, res_hi));
+		}
+
+		// Scalar tail
+		for (; x < width; x++) {
+			const int idx = x * BYTES_PER_PIXEL;
+			const int b = row[idx];
+			const int g = row[idx + 1];
+			const int r = row[idx + 2];
+			yRow[x] = (unsigned char)(((COEFF_R_Y * r + COEFF_G_Y * g + COEFF_B_Y * b + ROUNDING_BIAS) >> 8) + Y_OFFSET);
+		}
+	}
+
+	// UV plane: 8 UV pairs per NEON iteration
+	const int uvWidth = width / 2;
+	const int uvHeight = height / 2;
+	const int16x8_t coeff_r_u = vdupq_n_s16(COEFF_R_U);
+	const int16x8_t coeff_g_u = vdupq_n_s16(COEFF_G_U);
+	const int16x8_t coeff_b_u = vdupq_n_s16(COEFF_B_U);
+	const int16x8_t coeff_r_v = vdupq_n_s16(COEFF_R_V);
+	const int16x8_t coeff_g_v = vdupq_n_s16(COEFF_G_V);
+	const int16x8_t coeff_b_v = vdupq_n_s16(COEFF_B_V);
+	const int16x8_t bias_uv = vdupq_n_s16(ROUNDING_BIAS);
+	const int16x8_t offset_uv = vdupq_n_s16(UV_OFFSET);
+
+	for (int y = 0; y < uvHeight; y++) {
+		const unsigned char* line0 = bgra + (y * 2) * stride;
+		const unsigned char* line1 = bgra + (y * 2 + 1) * stride;
+		unsigned char* uvRow = uvPlane + y * width;
+		int x = 0;
+
+		for (; x <= uvWidth - 8; x += 8) {
+			const int srcOff = (x * 2) * BYTES_PER_PIXEL;
+
+			// Load 16 BGRA pixels from each row, deinterleaved
+			uint8x16x4_t r0 = vld4q_u8(line0 + srcOff);
+			uint8x16x4_t r1 = vld4q_u8(line1 + srcOff);
+
+			// Horizontal pairwise add (adjacent pixels) -> 8x uint16
+			uint16x8_t b_sum = vaddq_u16(vpaddlq_u8(r0.val[0]), vpaddlq_u8(r1.val[0]));
+			uint16x8_t g_sum = vaddq_u16(vpaddlq_u8(r0.val[1]), vpaddlq_u8(r1.val[1]));
+			uint16x8_t r_sum = vaddq_u16(vpaddlq_u8(r0.val[2]), vpaddlq_u8(r1.val[2]));
+
+			// Average: (sum + 2) >> 2
+			uint16x8_t b_avg = vshrq_n_u16(vaddq_u16(b_sum, vdupq_n_u16(UV_AVG_BIAS)), 2);
+			uint16x8_t g_avg = vshrq_n_u16(vaddq_u16(g_sum, vdupq_n_u16(UV_AVG_BIAS)), 2);
+			uint16x8_t r_avg = vshrq_n_u16(vaddq_u16(r_sum, vdupq_n_u16(UV_AVG_BIAS)), 2);
+
+			// Cast to signed for UV math
+			int16x8_t r_s = vreinterpretq_s16_u16(r_avg);
+			int16x8_t g_s = vreinterpretq_s16_u16(g_avg);
+			int16x8_t b_s = vreinterpretq_s16_u16(b_avg);
+
+			// U = ((-38*R - 74*G + 112*B + 128) >> 8) + 128
+			int16x8_t u_val = vmulq_s16(r_s, coeff_r_u);
+			u_val = vmlaq_s16(u_val, g_s, coeff_g_u);
+			u_val = vmlaq_s16(u_val, b_s, coeff_b_u);
+			u_val = vshrq_n_s16(vaddq_s16(u_val, bias_uv), 8);
+			uint8x8_t u_u8 = vqmovun_s16(vaddq_s16(u_val, offset_uv));
+
+			// V = ((112*R - 94*G - 18*B + 128) >> 8) + 128
+			int16x8_t v_val = vmulq_s16(r_s, coeff_r_v);
+			v_val = vmlaq_s16(v_val, g_s, coeff_g_v);
+			v_val = vmlaq_s16(v_val, b_s, coeff_b_v);
+			v_val = vshrq_n_s16(vaddq_s16(v_val, bias_uv), 8);
+			uint8x8_t v_u8 = vqmovun_s16(vaddq_s16(v_val, offset_uv));
+
+			// Interleave U/V for NV12: U0 V0 U1 V1 ...
+			uint8x8x2_t uv;
+			uv.val[0] = u_u8;
+			uv.val[1] = v_u8;
+			vst2_u8(uvRow + x * 2, uv);
+		}
+
+		// Scalar tail
+		for (; x < uvWidth; x++) {
+			const int col0 = (x * 2) * BYTES_PER_PIXEL;
+			const int col1 = (x * 2 + 1) * BYTES_PER_PIXEL;
+			const int r = (line0[col0 + 2] + line0[col1 + 2] + line1[col0 + 2] + line1[col1 + 2] + UV_AVG_BIAS) >> 2;
+			const int g = (line0[col0 + 1] + line0[col1 + 1] + line1[col0 + 1] + line1[col1 + 1] + UV_AVG_BIAS) >> 2;
+			const int b = (line0[col0] + line0[col1] + line1[col0] + line1[col1] + UV_AVG_BIAS) >> 2;
+			const int uvIdx = y * width + x * 2;
+			uvPlane[uvIdx] = (unsigned char)(((COEFF_R_U * r + COEFF_G_U * g + COEFF_B_U * b + ROUNDING_BIAS) >> 8) + UV_OFFSET);
+			uvPlane[uvIdx + 1] = (unsigned char)(((COEFF_R_V * r + COEFF_G_V * g + COEFF_B_V * b + ROUNDING_BIAS) >> 8) + UV_OFFSET);
+		}
+	}
+}
+
+#else  // !VE_USE_NEON — scalar fallback
+
+static void bgraToNV12(const unsigned char* bgra, unsigned char* nv12, int width, int height) {
+	const int frameSize = width * height;
+	const int stride = width * BYTES_PER_PIXEL;
+	unsigned char* yPlane = nv12;
+	unsigned char* uvPlane = nv12 + frameSize;
+
 	for (int y = 0; y < height; y++) {
 		const unsigned char* row = bgra + y * stride;
 		unsigned char* yRow = yPlane + y * width;
@@ -76,11 +232,10 @@ static void bgraToNV12(const unsigned char* bgra, unsigned char* nv12, int width
 			const int b = row[idx];
 			const int g = row[idx + 1];
 			const int r = row[idx + 2];
-			yRow[x] = (unsigned char)(((66 * r + 129 * g + 25 * b + 128) >> 8) + 16);
+			yRow[x] = (unsigned char)(((COEFF_R_Y * r + COEFF_G_Y * g + COEFF_B_Y * b + ROUNDING_BIAS) >> 8) + Y_OFFSET);
 		}
 	}
 
-	// Compute UV with 2x2 block averaging
 	const int uvWidth = width / 2;
 	const int uvHeight = height / 2;
 	for (int y = 0; y < uvHeight; y++) {
@@ -89,17 +244,17 @@ static void bgraToNV12(const unsigned char* bgra, unsigned char* nv12, int width
 		for (int x = 0; x < uvWidth; x++) {
 			const int col0 = (x * 2) * BYTES_PER_PIXEL;
 			const int col1 = (x * 2 + 1) * BYTES_PER_PIXEL;
-
-			const int r = (line0[col0 + 2] + line0[col1 + 2] + line1[col0 + 2] + line1[col1 + 2] + 2) >> 2;
-			const int g = (line0[col0 + 1] + line0[col1 + 1] + line1[col0 + 1] + line1[col1 + 1] + 2) >> 2;
-			const int b = (line0[col0] + line0[col1] + line1[col0] + line1[col1] + 2) >> 2;
-
+			const int r = (line0[col0 + 2] + line0[col1 + 2] + line1[col0 + 2] + line1[col1 + 2] + UV_AVG_BIAS) >> 2;
+			const int g = (line0[col0 + 1] + line0[col1 + 1] + line1[col0 + 1] + line1[col1 + 1] + UV_AVG_BIAS) >> 2;
+			const int b = (line0[col0] + line0[col1] + line1[col0] + line1[col1] + UV_AVG_BIAS) >> 2;
 			const int uvIdx = y * width + x * 2;
-			uvPlane[uvIdx] = (unsigned char)(((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128);
-			uvPlane[uvIdx + 1] = (unsigned char)(((112 * r - 94 * g - 18 * b + 128) >> 8) + 128);
+			uvPlane[uvIdx] = (unsigned char)(((COEFF_R_U * r + COEFF_G_U * g + COEFF_B_U * b + ROUNDING_BIAS) >> 8) + UV_OFFSET);
+			uvPlane[uvIdx + 1] = (unsigned char)(((COEFF_R_V * r + COEFF_G_V * g + COEFF_B_V * b + ROUNDING_BIAS) >> 8) + UV_OFFSET);
 		}
 	}
 }
+
+#endif	// VE_USE_NEON
 
 // ---------------------------------------------------------------------------
 // Drain encoder output — process all available output buffers

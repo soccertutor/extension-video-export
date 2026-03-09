@@ -28,11 +28,14 @@ static const int ERROR_BUF_SIZE = 512;
 static const int BYTES_PER_PIXEL = 4;  // BGRA
 
 static IMFSinkWriter* writer_ = NULL;
+static IMFMediaBuffer* buffer_ = NULL;
+static IMFSample* sample_ = NULL;
 static DWORD stream_index_ = 0;
 static int width_ = 0;
 static int height_ = 0;
 static int fps_ = 0;
 static int frame_index_ = 0;
+static int buffer_size_ = 0;
 static BOOL com_initialized_ = FALSE;
 static BOOL mf_started_ = FALSE;
 static char error_buf_[ERROR_BUF_SIZE] = {0};
@@ -165,77 +168,43 @@ static HRESULT createInputType(int width, int height, int fps, IMFMediaType** pp
 		return hr;
 	}
 
+	// Negative stride = top-down input, matching OpenFL BGRA layout.
+	// Eliminates per-frame row-reversal copy.
+	hr = pType->SetUINT32(MF_MT_DEFAULT_STRIDE, (UINT32)(-(int)(width * BYTES_PER_PIXEL)));
+	if (FAILED(hr)) {
+		pType->Release();
+		return hr;
+	}
+
 	*ppType = pType;
 	return S_OK;
 }
 
 // ---------------------------------------------------------------------------
-// Create an IMFSample from raw BGRA pixels
+// Write pre-allocated sample with BGRA pixel data
 // ---------------------------------------------------------------------------
 
-static HRESULT
-createSampleFromBGRA(const unsigned char* bgraPixels, int width, int height, LONGLONG timestamp, LONGLONG duration, IMFSample** ppSample) {
-	int stride = width * BYTES_PER_PIXEL;
-	int bufferSize = stride * height;
-
-	IMFMediaBuffer* pBuffer = NULL;
-	HRESULT hr = MFCreateMemoryBuffer(bufferSize, &pBuffer);
+static HRESULT writeSampleFromBGRA(const unsigned char* bgraPixels, LONGLONG timestamp, LONGLONG duration) {
+	BYTE* pData = NULL;
+	HRESULT hr = buffer_->Lock(&pData, NULL, NULL);
 	if (FAILED(hr)) return hr;
 
-	BYTE* pData = NULL;
-	hr = pBuffer->Lock(&pData, NULL, NULL);
-	if (FAILED(hr)) {
-		pBuffer->Release();
-		return hr;
-	}
+	// Top-down copy — negative stride on input type handles orientation
+	memcpy(pData, bgraPixels, buffer_size_);
 
-	// Copy rows bottom-up — MF RGB32 expects bottom-up row order
-	for (int y = 0; y < height; y++) {
-		const unsigned char* srcRow = bgraPixels + y * stride;
-		BYTE* dstRow = pData + (height - 1 - y) * stride;
-		memcpy(dstRow, srcRow, stride);
-	}
+	hr = buffer_->Unlock();
+	if (FAILED(hr)) return hr;
 
-	hr = pBuffer->Unlock();
-	if (FAILED(hr)) {
-		pBuffer->Release();
-		return hr;
-	}
+	hr = buffer_->SetCurrentLength(buffer_size_);
+	if (FAILED(hr)) return hr;
 
-	hr = pBuffer->SetCurrentLength(bufferSize);
-	if (FAILED(hr)) {
-		pBuffer->Release();
-		return hr;
-	}
+	hr = sample_->SetSampleTime(timestamp);
+	if (FAILED(hr)) return hr;
 
-	IMFSample* pSample = NULL;
-	hr = MFCreateSample(&pSample);
-	if (FAILED(hr)) {
-		pBuffer->Release();
-		return hr;
-	}
+	hr = sample_->SetSampleDuration(duration);
+	if (FAILED(hr)) return hr;
 
-	hr = pSample->AddBuffer(pBuffer);
-	pBuffer->Release();
-	if (FAILED(hr)) {
-		pSample->Release();
-		return hr;
-	}
-
-	hr = pSample->SetSampleTime(timestamp);
-	if (FAILED(hr)) {
-		pSample->Release();
-		return hr;
-	}
-
-	hr = pSample->SetSampleDuration(duration);
-	if (FAILED(hr)) {
-		pSample->Release();
-		return hr;
-	}
-
-	*ppSample = pSample;
-	return S_OK;
+	return writer_->WriteSample(stream_index_, sample_);
 }
 
 // ---------------------------------------------------------------------------
@@ -245,12 +214,15 @@ createSampleFromBGRA(const unsigned char* bgraPixels, int width, int height, LON
 extern "C" {
 
 static void releaseResources(void) {
+	safeRelease(&sample_);
+	safeRelease(&buffer_);
 	safeRelease(&writer_);
 	width_ = 0;
 	height_ = 0;
 	fps_ = 0;
 	frame_index_ = 0;
 	stream_index_ = 0;
+	buffer_size_ = 0;
 
 	if (mf_started_) {
 		MFShutdown();
@@ -364,6 +336,29 @@ int videoEncoderInit(const char* outputPath, int width, int height, int fps, int
 		return -1;
 	}
 
+	// Pre-allocate reusable buffer and sample for addFrame
+	buffer_size_ = width * height * BYTES_PER_PIXEL;
+	hr = MFCreateMemoryBuffer(buffer_size_, &buffer_);
+	if (FAILED(hr)) {
+		setErrorHR("MFCreateMemoryBuffer", hr);
+		releaseResources();
+		return -1;
+	}
+
+	hr = MFCreateSample(&sample_);
+	if (FAILED(hr)) {
+		setErrorHR("MFCreateSample", hr);
+		releaseResources();
+		return -1;
+	}
+
+	hr = sample_->AddBuffer(buffer_);
+	if (FAILED(hr)) {
+		setErrorHR("AddBuffer", hr);
+		releaseResources();
+		return -1;
+	}
+
 	width_ = width;
 	height_ = height;
 	fps_ = fps;
@@ -390,17 +385,9 @@ int videoEncoderAddFrame(const unsigned char* bgraPixels, int dataLength) {
 	LONGLONG frameDuration = 10000000LL / fps_;
 	LONGLONG timestamp = (LONGLONG)frame_index_ * frameDuration;
 
-	IMFSample* pSample = NULL;
-	HRESULT hr = createSampleFromBGRA(bgraPixels, width_, height_, timestamp, frameDuration, &pSample);
+	HRESULT hr = writeSampleFromBGRA(bgraPixels, timestamp, frameDuration);
 	if (FAILED(hr)) {
-		setErrorHR("createSampleFromBGRA", hr);
-		return -1;
-	}
-
-	hr = writer_->WriteSample(stream_index_, pSample);
-	safeRelease(&pSample);
-	if (FAILED(hr)) {
-		setErrorHR("WriteSample", hr);
+		setErrorHR("writeSampleFromBGRA", hr);
 		return -1;
 	}
 

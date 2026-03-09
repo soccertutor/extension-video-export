@@ -9,13 +9,16 @@
 #import <AVFoundation/AVFoundation.h>
 #import <CoreMedia/CoreMedia.h>
 #import <CoreVideo/CoreVideo.h>
+#include <string.h>
 
 // ---------------------------------------------------------------------------
 // Static state — single-threaded access from main thread
 // ---------------------------------------------------------------------------
 
 static const int ERROR_BUF_SIZE = 512;
-static const int BYTES_PER_PIXEL = 4;  // BGRA
+static const int BYTES_PER_PIXEL = 4;			 // BGRA
+static const double READY_WAIT_INTERVAL = 0.01;	 // seconds per run-loop drain
+static const int READY_WAIT_MAX_RETRIES = 500;	 // 500 * 0.01 = 5s timeout
 
 static AVAssetWriter *writer_ = nil;
 static AVAssetWriterInput *writer_input_ = nil;
@@ -138,35 +141,47 @@ int videoEncoderAddFrame(const unsigned char *bgraPixels, int dataLength) {
 			return -1;
 		}
 
-		// Wait until the input is ready to accept more data (5s timeout)
+		// Wait until the input is ready — drain the run loop so AVAssetWriter's
+		// internal completion handlers fire (flips isReadyForMoreMediaData).
+		// Much faster than a fixed-interval sleep; returns immediately when a
+		// source fires.  5-second total timeout preserved.
 		int waitRetries = 0;
 		while (!writer_input_.isReadyForMoreMediaData) {
-			[NSThread sleepForTimeInterval:0.005];
-			if (++waitRetries > 1000) {
+			CFRunLoopRunInMode(kCFRunLoopDefaultMode, READY_WAIT_INTERVAL, true);
+			if (++waitRetries > READY_WAIT_MAX_RETRIES) {
 				setError(@"Timed out waiting for writer input to become ready");
 				return -1;
 			}
 		}
 
-		// Create CVPixelBuffer wrapping the caller's BGRA data — no copy
-		CVPixelBufferRef pixelBuffer = NULL;
-		CVReturn status = CVPixelBufferCreateWithBytes(
-			kCFAllocatorDefault,
-			width_,
-			height_,
-			kCVPixelFormatType_32BGRA,
-			(void *)bgraPixels,
-			width_ * BYTES_PER_PIXEL,
-			NULL,  // no release callback — caller owns the data
-			NULL,
-			NULL,  // no pixel buffer attributes needed for temporary buffer
-			&pixelBuffer
-		);
-
-		if (status != kCVReturnSuccess || !pixelBuffer) {
-			setError([NSString stringWithFormat:@"CVPixelBufferCreateWithBytes failed: %d", (int)status]);
+		// Get a pooled CVPixelBuffer — reuses allocations across frames
+		CVPixelBufferPoolRef pool = adaptor_.pixelBufferPool;
+		if (!pool) {
+			setError(@"Pixel buffer pool not available");
 			return -1;
 		}
+
+		CVPixelBufferRef pixelBuffer = NULL;
+		CVReturn status = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixelBuffer);
+		if (status != kCVReturnSuccess || !pixelBuffer) {
+			setError([NSString stringWithFormat:@"CVPixelBufferPoolCreatePixelBuffer failed: %d", (int)status]);
+			return -1;
+		}
+
+		CVPixelBufferLockBaseAddress(pixelBuffer, 0);
+		void *const baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer);
+		const size_t bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer);
+		const int srcStride = width_ * BYTES_PER_PIXEL;
+
+		if ((int)bytesPerRow == srcStride) {
+			memcpy(baseAddress, bgraPixels, expectedLength);
+		} else {
+			// Pool buffer has padding — copy row by row
+			for (int y = 0; y < height_; y++) {
+				memcpy((unsigned char *)baseAddress + y * bytesPerRow, bgraPixels + y * srcStride, srcStride);
+			}
+		}
+		CVPixelBufferUnlockBaseAddress(pixelBuffer, 0);
 
 		CMTime presentationTime = CMTimeMake(frame_index_, fps_);
 		BOOL appended = [adaptor_ appendPixelBuffer:pixelBuffer withPresentationTime:presentationTime];
