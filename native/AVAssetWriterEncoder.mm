@@ -5,26 +5,38 @@
  * Single-instance design. All state is held in static globals.
  * GPU path uses async encoding: blit runs on the render thread, appendPixelBuffer
  * is dispatched to a serial queue so it overlaps the next frame's rendering.
+ *
+ * macOS GPU path: IOSurface + CGL (desktop OpenGL).
+ * iOS GPU path: IOSurface-backed CVPixelBuffer + CVOpenGLESTextureCache (OpenGL ES 3.0).
+ *
  * Input: BGRA pixel data (matches OpenFL native BitmapData). Output: H.264/MP4 file.
  */
 
+#import <TargetConditionals.h>
 #import <AVFoundation/AVFoundation.h>
 #import <CoreMedia/CoreMedia.h>
 #import <CoreVideo/CoreVideo.h>
+#include <string.h>
+
+#if TARGET_OS_OSX
 #import <IOSurface/IOSurface.h>
 #import <OpenGL/OpenGL.h>
 #import <OpenGL/gl3.h>
-#include <string.h>
+#else
+#import <OpenGLES/ES3/gl.h>
+#import <OpenGLES/ES3/glext.h>
+#endif
 
 // ---------------------------------------------------------------------------
 // Static state
 // ---------------------------------------------------------------------------
 
 static const int ERROR_BUF_SIZE = 512;
-static const int BYTES_PER_PIXEL = 4;			 // BGRA
-static const double READY_WAIT_INTERVAL = 0.01;	 // seconds per run-loop drain
-static const int READY_WAIT_MAX_RETRIES = 500;	 // 500 * 0.01 = 5s timeout
-static const int ASYNC_READY_WAIT_MAX = 5000;	 // 5000 * 1ms = 5s timeout (async path)
+static const int BYTES_PER_PIXEL = 4;					// BGRA
+static const double READY_WAIT_INTERVAL = 0.01;			// seconds per run-loop drain
+static const int READY_WAIT_MAX_RETRIES = 500;			// 500 * 0.01 = 5s timeout
+static const int ASYNC_READY_WAIT_MAX = 5000;			// 5000 * 1ms = 5s timeout (async path)
+static const useconds_t ASYNC_POLL_INTERVAL_US = 1000;	// 1ms poll interval for async path
 
 static AVAssetWriter *writer_ = nil;
 static AVAssetWriterInput *writer_input_ = nil;
@@ -35,9 +47,7 @@ static int fps_ = 0;
 static int frame_index_ = 0;
 static char error_buf_[ERROR_BUF_SIZE] = {0};
 static const int BUFFER_COUNT = 2;
-static IOSurfaceRef io_surfaces_[BUFFER_COUNT] = {nil, nil};
 static CVPixelBufferRef gpu_pixel_buffers_[BUFFER_COUNT] = {NULL, NULL};
-static GLuint io_surface_texs_[BUFFER_COUNT] = {0, 0};
 static GLuint io_surface_fbos_[BUFFER_COUNT] = {0, 0};
 static int current_buf_ = 0;
 
@@ -45,7 +55,15 @@ static int current_buf_ = 0;
 static dispatch_queue_t encode_queue_ = nil;
 static dispatch_semaphore_t buffer_sema_[BUFFER_COUNT] = {NULL, NULL};
 static GLsync blit_fence_ = NULL;
-static volatile bool async_error_ = false;
+static _Atomic bool async_error_ = false;
+
+#if TARGET_OS_OSX
+static IOSurfaceRef io_surfaces_[BUFFER_COUNT] = {nil, nil};
+static GLuint io_surface_texs_[BUFFER_COUNT] = {0, 0};
+#else
+static CVOpenGLESTextureCacheRef tex_cache_ = NULL;
+static CVOpenGLESTextureRef cv_textures_[BUFFER_COUNT] = {NULL, NULL};
+#endif
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -60,33 +78,49 @@ static void clearError(void) {
 	error_buf_[0] = '\0';
 }
 
-/** Release all double-buffered IOSurface and CVPixelBuffer resources. */
+/** Release all GPU pixel buffers and platform-specific surface resources. */
 static void releaseGpuBuffers(void) {
 	for (int i = 0; i < BUFFER_COUNT; i++) {
 		if (gpu_pixel_buffers_[i]) {
 			CVPixelBufferRelease(gpu_pixel_buffers_[i]);
 			gpu_pixel_buffers_[i] = NULL;
 		}
+#if TARGET_OS_OSX
 		if (io_surfaces_[i]) {
 			CFRelease(io_surfaces_[i]);
 			io_surfaces_[i] = nil;
 		}
+#endif
 	}
 	current_buf_ = 0;
 }
 
-/** Delete all IOSurface-backed GL textures and FBOs. */
+/** Delete all GL textures/FBOs and release platform texture resources. */
 static void releaseGpuFbos(void) {
 	for (int i = 0; i < BUFFER_COUNT; i++) {
 		if (io_surface_fbos_[i]) {
 			glDeleteFramebuffers(1, &io_surface_fbos_[i]);
 			io_surface_fbos_[i] = 0;
 		}
+#if TARGET_OS_OSX
 		if (io_surface_texs_[i]) {
 			glDeleteTextures(1, &io_surface_texs_[i]);
 			io_surface_texs_[i] = 0;
 		}
+#else
+		if (cv_textures_[i]) {
+			CFRelease(cv_textures_[i]);
+			cv_textures_[i] = NULL;
+		}
+#endif
 	}
+#if !TARGET_OS_OSX
+	if (tex_cache_) {
+		CVOpenGLESTextureCacheFlush(tex_cache_, 0);
+		CFRelease(tex_cache_);
+		tex_cache_ = NULL;
+	}
+#endif
 }
 
 /**
@@ -341,7 +375,8 @@ int videoEncoderInitGpu(const char *outputPath, int width, int height, int fps, 
 			return -1;
 		}
 
-		// Create double-buffered IOSurfaces for zero-copy GPU texture sharing.
+#if TARGET_OS_OSX
+		// macOS: create IOSurfaces directly, then wrap in CVPixelBuffers.
 		// Two buffers alternate: GPU renders to one while encoder reads the other.
 		NSDictionary *surfaceProps = @{
 			(NSString *)kIOSurfaceWidth : @(width),
@@ -383,6 +418,35 @@ int videoEncoderInitGpu(const char *outputPath, int width, int height, int fps, 
 				return -1;
 			}
 		}
+#else
+		// iOS: create IOSurface-backed CVPixelBuffers via CoreVideo API.
+		// CVOpenGLESTextureCache will bind them to GL textures in setupIoSurfaceFbo.
+		NSDictionary *pbAttrs = @{
+			(NSString *)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA),
+			(NSString *)kCVPixelBufferWidthKey : @(width),
+			(NSString *)kCVPixelBufferHeightKey : @(height),
+			(NSString *)kCVPixelBufferIOSurfacePropertiesKey : @{},
+			(NSString *)kCVPixelBufferOpenGLESCompatibilityKey : @YES
+		};
+		for (int i = 0; i < BUFFER_COUNT; i++) {
+			CVReturn cvRet = CVPixelBufferCreate(
+				kCFAllocatorDefault,
+				width,
+				height,
+				kCVPixelFormatType_32BGRA,
+				(__bridge CFDictionaryRef)pbAttrs,
+				&gpu_pixel_buffers_[i]
+			);
+			if (cvRet != kCVReturnSuccess || !gpu_pixel_buffers_[i]) {
+				setError([NSString stringWithFormat:@"CVPixelBufferCreate failed: %d", (int)cvRet]);
+				for (int j = 0; j < i; j++) {
+					CVPixelBufferRelease(gpu_pixel_buffers_[j]);
+					gpu_pixel_buffers_[j] = NULL;
+				}
+				return -1;
+			}
+		}
+#endif
 		current_buf_ = 0;
 
 		if (initAssetWriter(outputPath, width, height, fps, bitrate) != 0) {
@@ -400,7 +464,12 @@ int videoEncoderInitGpu(const char *outputPath, int width, int height, int fps, 
 }
 
 unsigned int videoEncoderGetSurfaceId(void) {
+#if TARGET_OS_OSX
 	return io_surfaces_[0] ? (unsigned int)IOSurfaceGetID(io_surfaces_[0]) : 0;
+#else
+	// iOS: texture binding handled by CVOpenGLESTextureCache, surface ID not needed externally
+	return 0;
+#endif
 }
 
 int videoEncoderSubmitGpuFrame(void) {
@@ -424,17 +493,18 @@ int videoEncoderSubmitGpuFrame(void) {
 		}
 
 		// Capture state for async block
-		int bufIdx = current_buf_;
-		CVPixelBufferRef pb = gpu_pixel_buffers_[bufIdx];
-		CMTime pt = CMTimeMake(frame_index_, fps_);
+		const int bufIdx = current_buf_;
+		CVPixelBufferRef const pb = gpu_pixel_buffers_[bufIdx];
+		const CMTime pt = CMTimeMake(frame_index_, fps_);
 
 		dispatch_async(encode_queue_, ^{
 			@autoreleasepool {
 				// Wait for encoder readiness (1ms poll, 5s timeout)
 				int waitRetries = 0;
 				while (!writer_input_.isReadyForMoreMediaData) {
-					usleep(1000);
+					usleep(ASYNC_POLL_INTERVAL_US);
 					if (++waitRetries > ASYNC_READY_WAIT_MAX) {
+						setError(@"Async timed out waiting for writer input");
 						async_error_ = true;
 						dispatch_semaphore_signal(buffer_sema_[bufIdx]);
 						return;
@@ -442,7 +512,10 @@ int videoEncoderSubmitGpuFrame(void) {
 				}
 
 				BOOL ok = [adaptor_ appendPixelBuffer:pb withPresentationTime:pt];
-				if (!ok) async_error_ = true;
+				if (!ok) {
+					setError([NSString stringWithFormat:@"Async appendPixelBuffer failed: %@", writer_.error.localizedDescription]);
+					async_error_ = true;
+				}
 
 				// Release buffer for reuse by the next blit
 				dispatch_semaphore_signal(buffer_sema_[bufIdx]);
@@ -456,6 +529,7 @@ int videoEncoderSubmitGpuFrame(void) {
 }
 
 int videoEncoderSetupIoSurfaceFbo(int width, int height) {
+#if TARGET_OS_OSX
 	CGLContextObj cgl_ctx = CGLGetCurrentContext();
 	if (!cgl_ctx) return -1;
 
@@ -492,20 +566,78 @@ int videoEncoderSetupIoSurfaceFbo(int width, int height) {
 		glBindFramebuffer(GL_FRAMEBUFFER, io_surface_fbos_[i]);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_RECTANGLE, io_surface_texs_[i], 0);
 
-		GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-		if (status != GL_FRAMEBUFFER_COMPLETE) {
+		GLenum fboStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+		if (fboStatus != GL_FRAMEBUFFER_COMPLETE) {
 			releaseGpuFbos();
 			glBindFramebuffer(GL_FRAMEBUFFER, 0);
 			return -1;
 		}
 	}
+#else
+	EAGLContext *ctx = [EAGLContext currentContext];
+	if (!ctx) return -1;
+
+	// Create texture cache for binding CVPixelBuffers to GL ES textures
+	CVReturn cacheRet = CVOpenGLESTextureCacheCreate(kCFAllocatorDefault, NULL, ctx, NULL, &tex_cache_);
+	if (cacheRet != kCVReturnSuccess || !tex_cache_) {
+		setError([NSString stringWithFormat:@"CVOpenGLESTextureCacheCreate failed: %d", (int)cacheRet]);
+		return -1;
+	}
+
+	for (int i = 0; i < BUFFER_COUNT; i++) {
+		if (!gpu_pixel_buffers_[i]) {
+			releaseGpuFbos();
+			return -1;
+		}
+
+		CVReturn texRet = CVOpenGLESTextureCacheCreateTextureFromImage(
+			kCFAllocatorDefault,
+			tex_cache_,
+			gpu_pixel_buffers_[i],
+			NULL,
+			GL_TEXTURE_2D,
+			GL_RGBA,
+			(GLsizei)width,
+			(GLsizei)height,
+			GL_BGRA_EXT,
+			GL_UNSIGNED_BYTE,
+			0,
+			&cv_textures_[i]
+		);
+		if (texRet != kCVReturnSuccess || !cv_textures_[i]) {
+			setError([NSString stringWithFormat:@"CVOpenGLESTextureCacheCreateTextureFromImage failed: %d", (int)texRet]);
+			releaseGpuFbos();
+			return -1;
+		}
+
+		GLuint texName = CVOpenGLESTextureGetName(cv_textures_[i]);
+		glBindTexture(GL_TEXTURE_2D, texName);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+		glGenFramebuffers(1, &io_surface_fbos_[i]);
+		glBindFramebuffer(GL_FRAMEBUFFER, io_surface_fbos_[i]);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texName, 0);
+
+		GLenum fboStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+		if (fboStatus != GL_FRAMEBUFFER_COMPLETE) {
+			setError(@"FBO incomplete after CVOpenGLESTexture attachment");
+			releaseGpuFbos();
+			glBindFramebuffer(GL_FRAMEBUFFER, 0);
+			return -1;
+		}
+	}
+#endif
 
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	return 0;
 }
 
 void videoEncoderBlitToIoSurface(unsigned int srcFbo, int width, int height) {
-	if (!buffer_sema_[current_buf_]) return;
+	if (!buffer_sema_[current_buf_]) {
+		setError(@"Blit called before GPU encoder initialized");
+		return;
+	}
 
 	// Wait for previous async encode of this buffer to complete
 	dispatch_semaphore_wait(buffer_sema_[current_buf_], DISPATCH_TIME_FOREVER);

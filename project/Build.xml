@@ -52,6 +52,7 @@
 			<vflag name="-framework" value="CoreVideo" />
 			<vflag name="-framework" value="IOSurface" />
 			<vflag name="-framework" value="OpenGL" if="macos" />
+			<vflag name="-framework" value="OpenGLES" if="iphoneos || iphonesim" />
 			<lib name="-Wl,-dead_strip" if="macos" unless="debug || fulldebug"/>
 			<section unless="MACOSX_DEPLOYMENT_TARGET">
 				<setenv name="MACOSX_DEPLOYMENT_TARGET" value="10.13" unless="HXCPP_ARM64"/>

@@ -4,6 +4,9 @@
 	<section if="macos">
 		<dependency name="OpenGL.framework"/>
 	</section>
+	<section if="iphoneos || iphonesim">
+		<dependency name="OpenGLES.framework"/>
+	</section>
 	<section if="macos || iphoneos || iphonesim">
 		<dependency name="IOSurface.framework"/>
 	</section>

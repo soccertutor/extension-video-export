@@ -8,7 +8,7 @@ Encode `BitmapData` frames into an MP4 file using native platform APIs — no ex
 
 | Platform | Backend | Notes |
 |----------|---------|-------|
-| macOS / iOS | AVFoundation (AVAssetWriter) | BGRA direct, GPU path (macOS) |
+| macOS / iOS | AVFoundation (AVAssetWriter) | BGRA direct, GPU path (macOS: CGL, iOS: CVOpenGLESTextureCache) |
 | Windows | Media Foundation (IMFSinkWriter) | BGRA direct |
 | Android | NDK AMediaCodec + AMediaMuxer | BGRA to NV12 |
 | Linux | OpenH264 + minimp4 | BGRA to I420 |
@@ -66,9 +66,9 @@ VideoEncoder.dispose();
 
 All input must be **BGRA** pixel data. Single-instance, not thread-safe — call everything from the same thread.
 
-### GPU path (macOS only)
+### GPU path (macOS / iOS)
 
-Zero-copy encoding via IOSurface — the GPU renders directly into a surface shared with the encoder, avoiding `glReadPixels`. Double-buffered: GPU writes to one surface while the encoder reads the other. Encoding runs asynchronously on a serial dispatch queue so it overlaps the next frame's rendering.
+Zero-copy encoding via IOSurface — the GPU renders directly into a surface shared with the encoder, avoiding `glReadPixels`. Double-buffered: GPU writes to one surface while the encoder reads the other. Encoding runs asynchronously on a serial dispatch queue so it overlaps the next frame's rendering. On macOS the IOSurface is bound via CGL; on iOS via CVOpenGLESTextureCache (OpenGL ES 3.0).
 
 ```haxe
 if (VideoEncoder.supportsGpuInput()) {
@@ -103,6 +103,7 @@ if (VideoEncoder.supportsGpuInput()) {
 | Platform | Requirement |
 |----------|-------------|
 | macOS | Xcode (AVFoundation, IOSurface, OpenGL) |
+| iOS | Xcode (AVFoundation, IOSurface, OpenGLES) |
 | Windows | MSVC (Media Foundation) |
 | Linux | `libopenh264-dev` |
 | Android | NDK r26c+ |
