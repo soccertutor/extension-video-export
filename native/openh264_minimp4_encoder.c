@@ -511,3 +511,42 @@ void videoEncoderDispose(void) {
 const char* videoEncoderGetError(void) {
 	return error_buf_[0] != '\0' ? error_buf_ : NULL;
 }
+
+int videoEncoderSupportsGpuInput(void) {
+	return 0;
+}
+
+int videoEncoderInitGpu(const char* outputPath, int width, int height, int fps, int bitrate) {
+	(void)outputPath;
+	(void)width;
+	(void)height;
+	(void)fps;
+	(void)bitrate;
+	setError("GPU input not supported on Linux");
+	return -1;
+}
+
+unsigned int videoEncoderGetSurfaceId(void) {
+	return 0;
+}
+
+int videoEncoderSubmitGpuFrame(void) {
+	setError("GPU input not supported on Linux");
+	return -1;
+}
+
+int videoEncoderSetupIoSurfaceFbo(int width, int height) {
+	(void)width;
+	(void)height;
+	setError("GPU input not supported on Linux");
+	return -1;
+}
+
+void videoEncoderBlitToIoSurface(unsigned int src_fbo, int width, int height) {
+	(void)src_fbo;
+	(void)width;
+	(void)height;
+}
+
+void videoEncoderDisposeIoSurfaceFbo(void) {
+}

@@ -19,6 +19,7 @@ import haxe.io.Bytes;
 	public static function main(): Void {
 		encodeAndVerify(ALIGNED_SIZE, ALIGNED_SIZE, 'aligned');
 		encodeAndVerify(NON_ALIGNED_SIZE, NON_ALIGNED_SIZE, 'non-aligned');
+		testGpuApiDoesNotCrash();
 
 		Sys.println('ALL TESTS PASSED');
 	}
@@ -41,6 +42,28 @@ import haxe.io.Bytes;
 			fail('$label output file too small: $size bytes');
 
 		sys.FileSystem.deleteFile(OUTPUT);
+	}
+
+	/** Verify GPU API functions are callable without crashing (no GL context needed). */
+	private static function testGpuApiDoesNotCrash(): Void {
+		Sys.println('--- GPU API smoke test ---');
+
+		final supported: Bool = VideoEncoder.supportsGpuInput();
+		Sys.println('  supportsGpuInput: $supported');
+
+		if (supported) {
+			// initGpu to a temp file — will succeed (AVAssetWriter doesn't need GL)
+			check(VideoEncoder.initGpu(OUTPUT, ALIGNED_SIZE, ALIGNED_SIZE, FPS, BITRATE), 'GPU initGpu');
+
+			// setupIoSurfaceFbo should fail (no GL context) but not crash
+			final fboOk: Bool = VideoEncoder.setupIoSurfaceFbo(ALIGNED_SIZE, ALIGNED_SIZE);
+			Sys.println('  setupIoSurfaceFbo (no GL): $fboOk — expected false');
+
+			VideoEncoder.dispose();
+			if (sys.FileSystem.exists(OUTPUT)) sys.FileSystem.deleteFile(OUTPUT);
+		}
+
+		Sys.println('  PASS GPU API callable');
 	}
 
 	private static function check(ok: Bool, name: String): Void {

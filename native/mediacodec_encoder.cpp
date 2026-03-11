@@ -524,6 +524,33 @@ const char* videoEncoderGetError(void) {
 	return error_buf_[0] != '\0' ? error_buf_ : NULL;
 }
 
+int videoEncoderSupportsGpuInput(void) {
+	return 0;
+}
+
+int videoEncoderInitGpu(const char*, int, int, int, int) {
+	setError("GPU input not supported on Android");
+	return -1;
+}
+
+unsigned int videoEncoderGetSurfaceId(void) {
+	return 0;
+}
+
+int videoEncoderSubmitGpuFrame(void) {
+	setError("GPU input not supported on Android");
+	return -1;
+}
+
+int videoEncoderSetupIoSurfaceFbo(int, int) {
+	setError("GPU input not supported on Android");
+	return -1;
+}
+void videoEncoderBlitToIoSurface(unsigned int, int, int) {
+}
+void videoEncoderDisposeIoSurfaceFbo(void) {
+}
+
 }  // extern "C"
 
 #endif	// __ANDROID__

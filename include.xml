@@ -1,4 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <extension>
 	<ndll name="extension_video_export" />
+	<section if="macos">
+		<dependency name="OpenGL.framework"/>
+	</section>
+	<section if="macos || iphoneos || iphonesim">
+		<dependency name="IOSurface.framework"/>
+	</section>
 </extension>

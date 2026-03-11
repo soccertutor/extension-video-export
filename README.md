@@ -8,7 +8,7 @@ Encode `BitmapData` frames into an MP4 file using native platform APIs — no ex
 
 | Platform | Backend | Notes |
 |----------|---------|-------|
-| macOS / iOS | AVFoundation (AVAssetWriter) | BGRA direct |
+| macOS / iOS | AVFoundation (AVAssetWriter) | BGRA direct, GPU path (macOS) |
 | Windows | Media Foundation (IMFSinkWriter) | BGRA direct |
 | Android | NDK AMediaCodec + AMediaMuxer | BGRA to NV12 |
 | Linux | OpenH264 + minimp4 | BGRA to I420 |
@@ -66,13 +66,43 @@ VideoEncoder.dispose();
 
 All input must be **BGRA** pixel data. Single-instance, not thread-safe — call everything from the same thread.
 
+### GPU path (macOS only)
+
+Zero-copy encoding via IOSurface — the GPU renders directly into a surface shared with the encoder, avoiding `glReadPixels`. Double-buffered: GPU writes to one surface while the encoder reads the other. Encoding runs asynchronously on a serial dispatch queue so it overlaps the next frame's rendering.
+
+```haxe
+if (VideoEncoder.supportsGpuInput()) {
+    VideoEncoder.initGpu("output.mp4", 1280, 720, 30, 4000000);
+    VideoEncoder.setupIoSurfaceFbo(1280, 720);
+
+    // Per frame: blit from your FBO, then submit
+    VideoEncoder.blitToIoSurface(myFboId, 1280, 720);
+    VideoEncoder.submitGpuFrame();
+
+    // Finalize
+    VideoEncoder.finish();
+    VideoEncoder.disposeIoSurfaceFbo();
+    VideoEncoder.dispose();
+}
+```
+
+| Method | Signature | Returns |
+|--------|-----------|---------|
+| `supportsGpuInput` | `()` | `Bool` — true if GPU path available |
+| `initGpu` | `(path, width, height, fps, bitrate)` | `Bool` — true on success |
+| `getSurfaceId` | `()` | `Int` — IOSurface ID (0 = none) |
+| `submitGpuFrame` | `()` | `Bool` — true on success |
+| `setupIoSurfaceFbo` | `(width, height)` | `Bool` — true on success |
+| `blitToIoSurface` | `(srcFboId, width, height)` | `Void` |
+| `disposeIoSurfaceFbo` | `()` | `Void` |
+
 ## Building from source
 
 ### Prerequisites
 
 | Platform | Requirement |
 |----------|-------------|
-| macOS | Xcode (AVFoundation) |
+| macOS | Xcode (AVFoundation, IOSurface, OpenGL) |
 | Windows | MSVC (Media Foundation) |
 | Linux | `libopenh264-dev` |
 | Android | NDK r26c+ |
