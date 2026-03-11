@@ -3,9 +3,9 @@
   "url": "https://github.com/soccertutor/extension-video-export",
   "license": "MIT",
   "description": "Cross-platform H.264/MP4 video encoder for OpenFL/hxcpp",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "contributors": ["soccertutor", "AxGord"],
   "tags": ["openfl", "video", "encoder", "native"],
-  "releasenote": "SIMD color conversion (NEON/SSE2), buffer reuse, LTO, H.264 High profile on Windows",
+  "releasenote": "Zero-copy GPU encoding via IOSurface (macOS: CGL, iOS: CVOpenGLESTextureCache)",
   "dependencies": {}
 }
