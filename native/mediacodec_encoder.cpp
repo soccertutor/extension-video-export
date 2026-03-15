@@ -18,6 +18,11 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include <GLES3/gl3.h>
+#include <android/native_window.h>
+
 #if defined(__aarch64__) || defined(__ARM_NEON) || defined(__ARM_NEON__)
 #define VE_USE_NEON 1
 #include <arm_neon.h>
@@ -33,6 +38,7 @@ static const int TIMEOUT_US = 10000;		  // 10ms dequeue timeout
 static const int INPUT_TIMEOUT_US = 1000000;  // 1s input buffer timeout
 static const int COLOR_FORMAT_NV12 = 21;	  // COLOR_FormatYUV420SemiPlanar
 static const char* const MIME_H264 = "video/avc";
+static const int COLOR_FORMAT_SURFACE = 0x7F000789;
 
 // BT.601 color conversion coefficients
 static const int COEFF_R_Y = 66;
@@ -60,6 +66,17 @@ static int frame_index_ = 0;
 static int muxer_fd_ = -1;
 static char error_buf_[ERROR_BUF_SIZE] = {0};
 
+static ANativeWindow* input_surface_ = NULL;
+static EGLDisplay egl_display_ = EGL_NO_DISPLAY;
+static EGLSurface egl_surface_ = EGL_NO_SURFACE;
+static GLsync blit_fence_ = NULL;
+static bool gpu_mode_ = false;
+
+// eglPresentationTimeANDROID — sets frame timestamp for MediaCodec surface input.
+// Resolved at runtime via eglGetProcAddress (EGL_ANDROID_presentation_time extension).
+typedef EGLBoolean (*PFNEGLPRESENTATIONTIMEANDROIDPROC)(EGLDisplay, EGLSurface, EGLnsecsANDROID);
+static PFNEGLPRESENTATIONTIMEANDROIDPROC eglPresentationTimeANDROID_ = NULL;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -73,6 +90,46 @@ static void setError(const char* fmt, ...) {
 
 static void clearError(void) {
 	error_buf_[0] = '\0';
+}
+
+// ---------------------------------------------------------------------------
+// EGL context save/restore
+// ---------------------------------------------------------------------------
+
+struct EglState {
+	EGLDisplay display;
+	EGLSurface draw;
+	EGLSurface read;
+	EGLContext context;
+};
+
+static EglState saveEglState(void) {
+	return {eglGetCurrentDisplay(), eglGetCurrentSurface(EGL_DRAW), eglGetCurrentSurface(EGL_READ), eglGetCurrentContext()};
+}
+
+static void restoreEglState(const EglState& s) {
+	eglMakeCurrent(s.display, s.draw, s.read, s.context);
+}
+
+// ---------------------------------------------------------------------------
+// GPU resource cleanup
+// ---------------------------------------------------------------------------
+
+static void releaseGpuResources(void) {
+	// Context may already be destroyed during dispose — just null the pointer
+	if (blit_fence_) blit_fence_ = NULL;
+	if (egl_display_ != EGL_NO_DISPLAY) {
+		if (egl_surface_ != EGL_NO_SURFACE) {
+			eglDestroySurface(egl_display_, egl_surface_);
+			egl_surface_ = EGL_NO_SURFACE;
+		}
+	}
+	egl_display_ = EGL_NO_DISPLAY;
+	if (input_surface_) {
+		ANativeWindow_release(input_surface_);
+		input_surface_ = NULL;
+	}
+	gpu_mode_ = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -475,9 +532,15 @@ int videoEncoderFinish(void) {
 	}
 
 	// Signal end of stream
-	ssize_t inputIdx = AMediaCodec_dequeueInputBuffer(codec_, INPUT_TIMEOUT_US);
-	if (inputIdx >= 0) {
-		AMediaCodec_queueInputBuffer(codec_, (size_t)inputIdx, 0, 0, 0, AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM);
+	if (gpu_mode_) {
+		const media_status_t eos_status = AMediaCodec_signalEndOfInputStream(codec_);
+		if (eos_status != AMEDIA_OK) {
+			setError("AMediaCodec_signalEndOfInputStream failed: %d", (int)eos_status);
+			return -1;
+		}
+	} else {
+		ssize_t inputIdx = AMediaCodec_dequeueInputBuffer(codec_, INPUT_TIMEOUT_US);
+		if (inputIdx >= 0) AMediaCodec_queueInputBuffer(codec_, (size_t)inputIdx, 0, 0, 0, AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM);
 	}
 
 	// Drain all remaining output
@@ -513,9 +576,11 @@ static void releaseResources(void) {
 	frame_index_ = 0;
 	muxer_track_index_ = -1;
 	muxer_started_ = false;
+	gpu_mode_ = false;
 }
 
 void videoEncoderDispose(void) {
+	if (gpu_mode_) releaseGpuResources();
 	releaseResources();
 	clearError();
 }
@@ -525,12 +590,124 @@ const char* videoEncoderGetError(void) {
 }
 
 int videoEncoderSupportsGpuInput(void) {
-	return 0;
+	return 1;
 }
 
-int videoEncoderInitGpu(const char*, int, int, int, int) {
-	setError("GPU input not supported on Android");
-	return -1;
+int videoEncoderInitGpu(const char* outputPath, int width, int height, int fps, int bitrate) {
+	clearError();
+
+	if (width <= 0 || height <= 0 || fps <= 0 || bitrate <= 0) {
+		setError("Invalid encoder parameters");
+		return -1;
+	}
+
+	// Open output file descriptor for muxer
+	muxer_fd_ = open(outputPath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	if (muxer_fd_ < 0) {
+		setError("Cannot open output file: %s", outputPath);
+		return -1;
+	}
+
+	// Create muxer
+	muxer_ = AMediaMuxer_new(muxer_fd_, AMEDIAMUXER_OUTPUT_FORMAT_MPEG_4);
+	if (!muxer_) {
+		setError("AMediaMuxer_new failed");
+		releaseResources();
+		return -1;
+	}
+
+	// Create H.264 encoder
+	codec_ = AMediaCodec_createEncoderByType(MIME_H264);
+	if (!codec_) {
+		setError("AMediaCodec_createEncoderByType failed for video/avc");
+		releaseResources();
+		return -1;
+	}
+
+	// Configure encoder with surface input (no color conversion needed)
+	AMediaFormat* format = AMediaFormat_new();
+	AMediaFormat_setString(format, AMEDIAFORMAT_KEY_MIME, MIME_H264);
+	AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_WIDTH, width);
+	AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_HEIGHT, height);
+	AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_BIT_RATE, bitrate);
+	AMediaFormat_setFloat(format, AMEDIAFORMAT_KEY_FRAME_RATE, (float)fps);
+	AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_I_FRAME_INTERVAL, 1);
+	AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_COLOR_FORMAT, COLOR_FORMAT_SURFACE);
+
+	media_status_t status = AMediaCodec_configure(codec_, format, NULL, NULL, AMEDIACODEC_CONFIGURE_FLAG_ENCODE);
+	AMediaFormat_delete(format);
+	if (status != AMEDIA_OK) {
+		setError("AMediaCodec_configure failed: %d", (int)status);
+		releaseResources();
+		return -1;
+	}
+
+	// Get input surface from codec (before start)
+	status = AMediaCodec_createInputSurface(codec_, &input_surface_);
+	if (status != AMEDIA_OK || !input_surface_) {
+		setError("AMediaCodec_createInputSurface failed: %d", (int)status);
+		releaseGpuResources();
+		releaseResources();
+		return -1;
+	}
+
+	status = AMediaCodec_start(codec_);
+	if (status != AMEDIA_OK) {
+		setError("AMediaCodec_start failed: %d", (int)status);
+		releaseGpuResources();
+		releaseResources();
+		return -1;
+	}
+
+	// Create EGL window surface over codec's input ANativeWindow.
+	// We use the caller's EGL context (OpenFL) for blit/swap — no shared context needed.
+	// This avoids FBO sharing issues (FBOs are per-context, not shared).
+	egl_display_ = eglGetCurrentDisplay();
+	const EGLContext caller_ctx = eglGetCurrentContext();
+
+	if (egl_display_ == EGL_NO_DISPLAY || caller_ctx == EGL_NO_CONTEXT) {
+		setError("No current EGL display/context — call from GL thread");
+		releaseGpuResources();
+		releaseResources();
+		return -1;
+	}
+
+	// Get config from caller's context — ensures surface compatibility
+	EGLint config_id = 0;
+	eglQueryContext(egl_display_, caller_ctx, EGL_CONFIG_ID, &config_id);
+
+	const EGLint config_attribs[] = {EGL_CONFIG_ID, config_id, EGL_NONE};
+	EGLConfig config = NULL;
+	EGLint num_configs = 0;
+	eglChooseConfig(egl_display_, config_attribs, &config, 1, &num_configs);
+	if (num_configs == 0) {
+		setError("eglChooseConfig failed for config_id %d", config_id);
+		releaseGpuResources();
+		releaseResources();
+		return -1;
+	}
+
+	// Create window surface over the codec's input ANativeWindow
+	egl_surface_ = eglCreateWindowSurface(egl_display_, config, input_surface_, NULL);
+	if (egl_surface_ == EGL_NO_SURFACE) {
+		setError("eglCreateWindowSurface failed: 0x%x", eglGetError());
+		releaseGpuResources();
+		releaseResources();
+		return -1;
+	}
+
+	// Resolve eglPresentationTimeANDROID for frame timestamps
+	eglPresentationTimeANDROID_ = (PFNEGLPRESENTATIONTIMEANDROIDPROC)eglGetProcAddress("eglPresentationTimeANDROID");
+
+	gpu_mode_ = true;
+	width_ = width;
+	height_ = height;
+	fps_ = fps;
+	frame_index_ = 0;
+	muxer_track_index_ = -1;
+	muxer_started_ = false;
+
+	return 0;
 }
 
 unsigned int videoEncoderGetSurfaceId(void) {
@@ -538,17 +715,73 @@ unsigned int videoEncoderGetSurfaceId(void) {
 }
 
 int videoEncoderSubmitGpuFrame(void) {
-	setError("GPU input not supported on Android");
-	return -1;
+	clearError();
+
+	if (!codec_ || !gpu_mode_) {
+		setError("GPU encoder not initialized");
+		return -1;
+	}
+
+	// Use caller's context with encoder surface — fence was created in this context
+	const EglState saved = saveEglState();
+	eglMakeCurrent(egl_display_, egl_surface_, egl_surface_, saved.context);
+
+	// Wait for blit to complete
+	if (blit_fence_) {
+		glClientWaitSync(blit_fence_, GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
+		glDeleteSync(blit_fence_);
+		blit_fence_ = NULL;
+	}
+
+	// Set presentation timestamp (nanoseconds) before swap
+	if (eglPresentationTimeANDROID_) {
+		const EGLnsecsANDROID timestamp_ns = (EGLnsecsANDROID)frame_index_ * 1000000000LL / fps_;
+		eglPresentationTimeANDROID_(egl_display_, egl_surface_, timestamp_ns);
+	}
+
+	// Submit frame to encoder via eglSwapBuffers
+	eglSwapBuffers(egl_display_, egl_surface_);
+
+	restoreEglState(saved);
+
+	frame_index_++;
+
+	if (drainEncoder(false) != 0) return -1;
+
+	return 0;
 }
 
-int videoEncoderSetupIoSurfaceFbo(int, int) {
-	setError("GPU input not supported on Android");
-	return -1;
+int videoEncoderSetupIoSurfaceFbo(int width, int height) {
+	clearError();
+	if (!gpu_mode_) {
+		setError("GPU encoder not initialized");
+		return -1;
+	}
+	// No FBO needed — blit goes to default framebuffer of encoder surface
+	(void)width;
+	(void)height;
+	return 0;
 }
-void videoEncoderBlitToIoSurface(unsigned int, int, int) {
+
+void videoEncoderBlitToIoSurface(unsigned int srcFbo, int width, int height) {
+	// Use caller's context with encoder surface — srcFbo is valid in caller's context
+	const EglState saved = saveEglState();
+	eglMakeCurrent(egl_display_, egl_surface_, egl_surface_, saved.context);
+
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, srcFbo);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+	glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+	glFlush();
+
+	// Fence to ensure blit completes before submitGpuFrame swaps
+	if (blit_fence_) glDeleteSync(blit_fence_);
+	blit_fence_ = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+
+	restoreEglState(saved);
 }
+
 void videoEncoderDisposeIoSurfaceFbo(void) {
+	releaseGpuResources();
 }
 
 }  // extern "C"

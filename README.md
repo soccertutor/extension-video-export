@@ -10,7 +10,7 @@ Encode `BitmapData` frames into an MP4 file using native platform APIs — no ex
 |----------|---------|-------|
 | macOS / iOS | AVFoundation (AVAssetWriter) | BGRA direct, GPU path (macOS: CGL, iOS: CVOpenGLESTextureCache) |
 | Windows | Media Foundation (IMFSinkWriter) | BGRA direct |
-| Android | NDK AMediaCodec + AMediaMuxer | BGRA to NV12 |
+| Android | NDK AMediaCodec + AMediaMuxer | BGRA to NV12, GPU path (EGL surface input) |
 | Linux | OpenH264 + minimp4 | BGRA to I420 |
 
 ## Minimum platform versions
@@ -66,9 +66,12 @@ VideoEncoder.dispose();
 
 All input must be **BGRA** pixel data. Single-instance, not thread-safe — call everything from the same thread.
 
-### GPU path (macOS / iOS)
+### GPU path (macOS / iOS / Android)
 
-Zero-copy encoding via IOSurface — the GPU renders directly into a surface shared with the encoder, avoiding `glReadPixels`. Double-buffered: GPU writes to one surface while the encoder reads the other. Encoding runs asynchronously on a serial dispatch queue so it overlaps the next frame's rendering. On macOS the IOSurface is bound via CGL; on iOS via CVOpenGLESTextureCache (OpenGL ES 3.0).
+Zero-copy encoding — the GPU renders directly into a surface shared with the encoder, avoiding `glReadPixels`.
+
+- **macOS / iOS**: IOSurface double-buffered path. GPU writes to one surface while the encoder reads the other. Encoding runs asynchronously on a serial dispatch queue. macOS binds via CGL; iOS via CVOpenGLESTextureCache (OpenGL ES 3.0).
+- **Android**: EGL surface input via `AMediaCodec_createInputSurface`. Frames are blit from the source FBO to the codec's ANativeWindow surface and submitted via `eglSwapBuffers`. Uses `eglPresentationTimeANDROID` for frame timestamps.
 
 ```haxe
 if (VideoEncoder.supportsGpuInput()) {
@@ -106,7 +109,7 @@ if (VideoEncoder.supportsGpuInput()) {
 | iOS | Xcode (AVFoundation, IOSurface, OpenGLES) |
 | Windows | MSVC (Media Foundation) |
 | Linux | `libopenh264-dev` |
-| Android | NDK r26c+ |
+| Android | NDK r26c+ (EGL, GLESv3) |
 
 ### IDE support (optional)
 

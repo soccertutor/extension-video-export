@@ -2,6 +2,7 @@
 ndll/
 project/obj/
 test/bin/
+test/android/build/
 
 # IDE / OS
 .dev

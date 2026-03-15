@@ -142,6 +142,50 @@ jobs:
           path: ndll/${{ matrix.ndll_dir }}/
           retention-days: 5
 
+  test-android:
+    needs: build
+    runs-on: ubuntu-latest
+    name: android-test (API ${{ matrix.api-level }})
+    strategy:
+      fail-fast: false
+      matrix:
+        api-level: [26, 30, 34]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26c
+
+      - name: Build native test with CMake
+        run: |
+          cmake -B test/android/build \
+            -DCMAKE_TOOLCHAIN_FILE=${{ steps.setup-ndk.outputs.ndk-path }}/build/cmake/android.toolchain.cmake \
+            -DANDROID_ABI=x86_64 \
+            -DANDROID_PLATFORM=android-${{ matrix.api-level }} \
+            -S test/android
+          cmake --build test/android/build
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run tests on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api-level }}
+          arch: x86_64
+          emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -no-audio -no-boot-anim
+          script: |
+            adb push test/android/build/android_encoder_test /data/local/tmp/
+            adb shell chmod +x /data/local/tmp/android_encoder_test
+            adb shell /data/local/tmp/android_encoder_test
+
   publish:
     needs: [detect-release, build]
     runs-on: ubuntu-latest
@@ -182,7 +226,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          NOTES=$(jq -r .releasenote haxelib.json)
           gh release create "$TAG" \
             extension-video-export.zip \
             --title "$TAG" \
-            --generate-notes
+            --notes "$NOTES"

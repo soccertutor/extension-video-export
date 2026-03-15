@@ -72,6 +72,8 @@
 		<section if="android">
 			<files id="android" />
 			<lib name="-lmediandk" />
+			<lib name="-lEGL" />
+			<lib name="-lGLESv3" />
 		</section>
 
 		<section if="linux">
