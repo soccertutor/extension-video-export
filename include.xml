@@ -4,10 +4,13 @@
 	<section if="macos">
 		<dependency name="OpenGL.framework"/>
 	</section>
-	<section if="iphoneos || iphonesim">
+	<section if="ios">
 		<dependency name="OpenGLES.framework"/>
 	</section>
-	<section if="macos || iphoneos || iphonesim">
+	<section if="macos || ios">
+		<dependency name="AVFoundation.framework"/>
+		<dependency name="CoreMedia.framework"/>
+		<dependency name="CoreVideo.framework"/>
 		<dependency name="IOSurface.framework"/>
 	</section>
 </extension>

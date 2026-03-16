@@ -9,6 +9,11 @@
 
 #ifdef __ANDROID__
 
+// Allow calling API 26+ functions as weak symbols on API 21+ builds.
+// Functions resolve to NULL on older devices — check before calling.
+// Requires NDK r24+ (bionic weak symbol support).
+#define __ANDROID_UNAVAILABLE_SYMBOLS_ARE_WEAK__
+
 #include <fcntl.h>
 #include <media/NdkMediaCodec.h>
 #include <media/NdkMediaFormat.h>
@@ -590,7 +595,7 @@ const char* videoEncoderGetError(void) {
 }
 
 int videoEncoderSupportsGpuInput(void) {
-	return 1;
+	return AMediaCodec_createInputSurface && AMediaCodec_signalEndOfInputStream;
 }
 
 int videoEncoderInitGpu(const char* outputPath, int width, int height, int fps, int bitrate) {
@@ -642,7 +647,12 @@ int videoEncoderInitGpu(const char* outputPath, int width, int height, int fps, 
 		return -1;
 	}
 
-	// Get input surface from codec (before start)
+	// Get input surface from codec (before start) — API 26+, guarded by weak symbol
+	if (!AMediaCodec_createInputSurface) {
+		setError("GPU encoding requires Android 8.0+ (API 26)");
+		releaseResources();
+		return -1;
+	}
 	status = AMediaCodec_createInputSurface(codec_, &input_surface_);
 	if (status != AMEDIA_OK || !input_surface_) {
 		setError("AMediaCodec_createInputSurface failed: %d", (int)status);

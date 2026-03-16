@@ -1,5 +1,6 @@
 # Build artifacts
 ndll/
+obj/
 project/obj/
 test/bin/
 test/android/build/

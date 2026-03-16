@@ -40,7 +40,11 @@
 
 	<set name="DEBUGEXTRA" value="-debug" if="fulldebug" />
 
-	<target id="NDLL" output="${LIBPREFIX}extension_video_export${DEBUGEXTRA}" tool="linker" toolid="${STD_MODULE_LINK}">
+	<set name="IOS_SUFFIX" value="" />
+	<set name="IOS_SUFFIX" value=".iphoneos" if="iphoneos" />
+	<set name="IOS_SUFFIX" value=".iphonesim" if="iphonesim" />
+
+	<target id="NDLL" output="${LIBPREFIX}extension_video_export${DEBUGEXTRA}${IOS_SUFFIX}" tool="linker" toolid="${STD_MODULE_LINK}">
 		<outdir name="../ndll/${BINDIR}" />
 		<ext value=".ndll" if="windows || macos || linux" />
 		<files id="common" />
@@ -72,6 +76,7 @@
 		<section if="android">
 			<files id="android" />
 			<lib name="-lmediandk" />
+			<lib name="-landroid" />
 			<lib name="-lEGL" />
 			<lib name="-lGLESv3" />
 		</section>
