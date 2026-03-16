@@ -68,6 +68,7 @@ jobs:
             ndll_dir: iPhone
 
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
     name: ${{ matrix.label || matrix.target }} (${{ matrix.runner }})
 
     steps:
@@ -145,6 +146,7 @@ jobs:
   test-android:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     name: android-test (API ${{ matrix.api-level }})
     strategy:
       fail-fast: false
