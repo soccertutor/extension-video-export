@@ -12,5 +12,6 @@
 		<dependency name="CoreMedia.framework"/>
 		<dependency name="CoreVideo.framework"/>
 		<dependency name="IOSurface.framework"/>
+		<dependency name="Metal.framework"/>
 	</section>
 </extension>

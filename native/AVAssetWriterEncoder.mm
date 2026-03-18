@@ -18,6 +18,9 @@
 #import <CoreVideo/CoreVideo.h>
 #include <string.h>
 
+#import <Metal/Metal.h>
+#import <CoreVideo/CVMetalTexture.h>
+#import <CoreVideo/CVMetalTextureCache.h>
 #if TARGET_OS_OSX
 #import <IOSurface/IOSurface.h>
 #import <OpenGL/OpenGL.h>
@@ -57,12 +60,30 @@ static dispatch_semaphore_t buffer_sema_[BUFFER_COUNT] = {NULL, NULL};
 static GLsync blit_fence_ = NULL;
 static _Atomic bool async_error_ = false;
 
+// Metal copy: GPU blit from IOSurface to fresh pooled CVPixelBuffer.
+// Shared across macOS and iOS — prevents encoder B-frame buffer reuse issues.
+static id<MTLDevice> mtl_device_ = nil;
+static id<MTLCommandQueue> mtl_queue_ = nil;
+static CVMetalTextureCacheRef mtl_tex_cache_ = NULL;
+static CVPixelBufferRef frame_copy_ = NULL;
+
+/** Create Metal device, command queue, and texture cache for GPU buffer copies. */
+static void initMetalCopyResources(void) {
+	mtl_device_ = MTLCreateSystemDefaultDevice();
+	if (mtl_device_) {
+		mtl_queue_ = [mtl_device_ newCommandQueue];
+		CVReturn ret = CVMetalTextureCacheCreate(kCFAllocatorDefault, NULL, mtl_device_, NULL, &mtl_tex_cache_);
+		if (ret != kCVReturnSuccess) mtl_tex_cache_ = NULL;
+	}
+}
+
 #if TARGET_OS_OSX
 static IOSurfaceRef io_surfaces_[BUFFER_COUNT] = {nil, nil};
 static GLuint io_surface_texs_[BUFFER_COUNT] = {0, 0};
 #else
 static CVOpenGLESTextureCacheRef tex_cache_ = NULL;
 static CVOpenGLESTextureRef cv_textures_[BUFFER_COUNT] = {NULL, NULL};
+static GLuint pbo_[BUFFER_COUNT] = {0, 0};	// fallback if Metal not available
 #endif
 
 // ---------------------------------------------------------------------------
@@ -120,7 +141,23 @@ static void releaseGpuFbos(void) {
 		CFRelease(tex_cache_);
 		tex_cache_ = NULL;
 	}
+	for (int i = 0; i < BUFFER_COUNT; i++)
+		if (pbo_[i]) {
+			glDeleteBuffers(1, &pbo_[i]);
+			pbo_[i] = 0;
+		}
 #endif
+	// Metal cleanup (shared macOS/iOS)
+	if (frame_copy_) {
+		CVPixelBufferRelease(frame_copy_);
+		frame_copy_ = NULL;
+	}
+	if (mtl_tex_cache_) {
+		CFRelease(mtl_tex_cache_);
+		mtl_tex_cache_ = NULL;
+	}
+	mtl_queue_ = nil;
+	mtl_device_ = nil;
 }
 
 /**
@@ -145,8 +182,14 @@ static int initAssetWriter(const char *outputPath, int width, int height, int fp
 	}
 
 	// H.264 output settings with requested bitrate
+	NSString *codecType;
+	if (@available(macOS 10.13, iOS 11.0, *))
+		codecType = AVVideoCodecTypeH264;
+	else
+		codecType = @"avc1";
+
 	NSDictionary *videoSettings = @{
-		AVVideoCodecKey : AVVideoCodecH264,
+		AVVideoCodecKey : codecType,
 		AVVideoWidthKey : @(width),
 		AVVideoHeightKey : @(height),
 		AVVideoCompressionPropertiesKey : @{
@@ -299,7 +342,11 @@ int videoEncoderFinish(void) {
 
 		// Drain pending async encodes before finishing
 		if (encode_queue_)
-			dispatch_sync(encode_queue_, ^{});
+			dispatch_sync(
+				encode_queue_,
+				^{
+				}
+			);
 
 		if (async_error_) {
 			setError(@"Async encode failed during export");
@@ -330,7 +377,11 @@ void videoEncoderDispose(void) {
 	@autoreleasepool {
 		// Drain pending async encodes before tearing down
 		if (encode_queue_) {
-			dispatch_sync(encode_queue_, ^{});
+			dispatch_sync(
+				encode_queue_,
+				^{
+				}
+			);
 			encode_queue_ = nil;
 		}
 		for (int i = 0; i < BUFFER_COUNT; i++) {
@@ -363,7 +414,8 @@ const char *videoEncoderGetError(void) {
 }
 
 int videoEncoderSupportsGpuInput(void) {
-	return 1;
+	id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+	return device != nil ? 1 : 0;
 }
 
 int videoEncoderInitGpu(const char *outputPath, int width, int height, int fps, int bitrate) {
@@ -485,21 +537,22 @@ int videoEncoderSubmitGpuFrame(void) {
 			return -1;
 		}
 
-		// Wait for GPU blit to complete (fence from blitToIoSurface)
-		if (blit_fence_) {
+		// Wait for GL fence if no Metal copy was done
+		if (!frame_copy_ && blit_fence_) {
 			glClientWaitSync(blit_fence_, GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
 			glDeleteSync(blit_fence_);
 			blit_fence_ = NULL;
 		}
 
-		// Capture state for async block
+		// If Metal path copied to fresh buffer, use it; otherwise use IOSurface buffer
 		const int bufIdx = current_buf_;
-		CVPixelBufferRef const pb = gpu_pixel_buffers_[bufIdx];
+		CVPixelBufferRef const pb = frame_copy_ ? frame_copy_ : gpu_pixel_buffers_[bufIdx];
+		CVPixelBufferRef const frameCopy = frame_copy_;
+		frame_copy_ = NULL;	 // transfer ownership to async block
 		const CMTime pt = CMTimeMake(frame_index_, fps_);
 
 		dispatch_async(encode_queue_, ^{
 			@autoreleasepool {
-				// Wait for encoder readiness (1ms poll, 5s timeout)
 				int waitRetries = 0;
 				while (!writer_input_.isReadyForMoreMediaData) {
 					usleep(ASYNC_POLL_INTERVAL_US);
@@ -516,8 +569,9 @@ int videoEncoderSubmitGpuFrame(void) {
 					setError([NSString stringWithFormat:@"Async appendPixelBuffer failed: %@", writer_.error.localizedDescription]);
 					async_error_ = true;
 				}
+				// Release fresh buffer copy (encoder retains its own reference)
+				if (frameCopy) CVPixelBufferRelease(frameCopy);
 
-				// Release buffer for reuse by the next blit
 				dispatch_semaphore_signal(buffer_sema_[bufIdx]);
 			}
 		});
@@ -573,6 +627,8 @@ int videoEncoderSetupIoSurfaceFbo(int width, int height) {
 			return -1;
 		}
 	}
+
+	initMetalCopyResources();
 #else
 	EAGLContext *ctx = [EAGLContext currentContext];
 	if (!ctx) return -1;
@@ -627,6 +683,19 @@ int videoEncoderSetupIoSurfaceFbo(int width, int height) {
 			return -1;
 		}
 	}
+
+	// Metal can reliably sync IOSurface operations (unlike GL on Metal compat layer).
+	initMetalCopyResources();
+
+	// PBO fallback if Metal sync not available
+	if (!mtl_tex_cache_) {
+		for (int i = 0; i < BUFFER_COUNT; i++) {
+			glGenBuffers(1, &pbo_[i]);
+			glBindBuffer(GL_PIXEL_PACK_BUFFER, pbo_[i]);
+			glBufferData(GL_PIXEL_PACK_BUFFER, width * height * BYTES_PER_PIXEL, NULL, GL_STREAM_READ);
+		}
+		glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+	}
 #endif
 
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -642,10 +711,115 @@ void videoEncoderBlitToIoSurface(unsigned int srcFbo, int width, int height) {
 	// Wait for previous async encode of this buffer to complete
 	dispatch_semaphore_wait(buffer_sema_[current_buf_], DISPATCH_TIME_FOREVER);
 
+	// GL blit rendered frame to IOSurface FBO
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, srcFbo);
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, io_surface_fbos_[current_buf_]);
 	glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-	glFlush();	// Submit to GPU without blocking — fence tracks completion
+
+	if (mtl_tex_cache_ && mtl_queue_ && adaptor_) {
+		// glFinish ensures GL has fully written the IOSurface before Metal reads it.
+		glFinish();
+		// Metal copy to fresh CVPixelBuffer from pool.
+		// The H.264 encoder holds references to CVPixelBuffers across B-frames
+		// (has_b_frames=2). With only 2 IOSurface buffers, the next GL blit
+		// overwrites data the encoder is still reading, causing frame jerks.
+		// Fix: copy to a fresh pooled buffer via Metal blit (GPU-to-GPU).
+		// Metal's waitUntilCompleted provides the sync barrier that GL lacks.
+
+		// Get fresh CVPixelBuffer from encoder pool
+		CVPixelBufferRef freshPb = NULL;
+		CVReturn poolRet = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, adaptor_.pixelBufferPool, &freshPb);
+		if (poolRet != kCVReturnSuccess || !freshPb) {
+			setError(@"Failed to get fresh CVPixelBuffer from pool");
+			dispatch_semaphore_signal(buffer_sema_[current_buf_]);
+			return;
+		}
+
+		// Metal blit from IOSurface to fresh buffer
+		CVMetalTextureRef srcMtlTex = NULL, dstMtlTex = NULL;
+		CVReturn r1 = CVMetalTextureCacheCreateTextureFromImage(
+			kCFAllocatorDefault,
+			mtl_tex_cache_,
+			gpu_pixel_buffers_[current_buf_],
+			NULL,
+			MTLPixelFormatBGRA8Unorm,
+			width,
+			height,
+			0,
+			&srcMtlTex
+		);
+		CVReturn r2 = CVMetalTextureCacheCreateTextureFromImage(
+			kCFAllocatorDefault,
+			mtl_tex_cache_,
+			freshPb,
+			NULL,
+			MTLPixelFormatBGRA8Unorm,
+			width,
+			height,
+			0,
+			&dstMtlTex
+		);
+
+		bool blit_ok = false;
+		if (r1 == kCVReturnSuccess && r2 == kCVReturnSuccess && srcMtlTex && dstMtlTex) {
+			id<MTLTexture> srcTex = CVMetalTextureGetTexture(srcMtlTex);
+			id<MTLTexture> dstTex = CVMetalTextureGetTexture(dstMtlTex);
+			id<MTLCommandBuffer> cmdBuf = [mtl_queue_ commandBuffer];
+			id<MTLBlitCommandEncoder> blit = [cmdBuf blitCommandEncoder];
+			[blit copyFromTexture:srcTex
+					  sourceSlice:0
+					  sourceLevel:0
+					 sourceOrigin:MTLOriginMake(0, 0, 0)
+					   sourceSize:MTLSizeMake(width, height, 1)
+						toTexture:dstTex
+				 destinationSlice:0
+				 destinationLevel:0
+				destinationOrigin:MTLOriginMake(0, 0, 0)];
+			[blit endEncoding];
+			[cmdBuf commit];
+			[cmdBuf waitUntilCompleted];
+			blit_ok = true;
+		}
+
+		if (srcMtlTex) CFRelease(srcMtlTex);
+		if (dstMtlTex) CFRelease(dstMtlTex);
+
+		if (blit_ok) {
+			// Store fresh buffer for submitGpuFrame
+			if (frame_copy_) CVPixelBufferRelease(frame_copy_);
+			frame_copy_ = freshPb;
+		} else {
+			// Metal texture creation failed — release unused buffer, fall through to IOSurface path
+			CVPixelBufferRelease(freshPb);
+		}
+	}
+#if !TARGET_OS_OSX
+	else {
+		// iOS fallback: PBO readback if Metal not available (slower but correct)
+		glBindFramebuffer(GL_FRAMEBUFFER, srcFbo);
+		size_t rowBytes = width * BYTES_PER_PIXEL;
+		size_t totalBytes = rowBytes * height;
+		glBindBuffer(GL_PIXEL_PACK_BUFFER, pbo_[current_buf_]);
+		glReadPixels(0, 0, width, height, GL_BGRA_EXT, GL_UNSIGNED_BYTE, 0);
+		GLsync fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+		glClientWaitSync(fence, GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
+		glDeleteSync(fence);
+		void *pboData = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, totalBytes, GL_MAP_READ_BIT);
+		if (pboData) {
+			CVPixelBufferLockBaseAddress(gpu_pixel_buffers_[current_buf_], 0);
+			void *dst = CVPixelBufferGetBaseAddress(gpu_pixel_buffers_[current_buf_]);
+			size_t dstStride = CVPixelBufferGetBytesPerRow(gpu_pixel_buffers_[current_buf_]);
+			if (dstStride == rowBytes)
+				memcpy(dst, pboData, totalBytes);
+			else
+				for (int row = 0; row < height; row++)
+					memcpy((uint8_t *)dst + row * dstStride, (const uint8_t *)pboData + row * rowBytes, rowBytes);
+			CVPixelBufferUnlockBaseAddress(gpu_pixel_buffers_[current_buf_], 0);
+			glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+		}
+		glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+	}
+#endif
 
 	// Fence to track blit completion (waited on in submitGpuFrame before dispatch)
 	if (blit_fence_) glDeleteSync(blit_fence_);

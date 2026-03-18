@@ -4,6 +4,7 @@ obj/
 project/obj/
 test/bin/
 test/android/build/
+test/ios/build/
 
 # IDE / OS
 .dev

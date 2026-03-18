@@ -1,20 +1,25 @@
 <xml>
 	<!-- Release optimizations: LTO (macOS/iOS/Windows/Android), dead-code strip (macOS/Linux) -->
-	<set name="HXCPP_OPTIMIZE_LINK" value="1" unless="debug || fulldebug"/>
+	<set name="HXCPP_OPTIMIZE_LINK" value="1" unless="debug || fulldebug" />
 
-	<include name="${HXCPP}/build-tool/BuildCommon.xml"/>
+	<include name="${HXCPP}/build-tool/BuildCommon.xml" />
 
 	<set name="SRCDIR" value="${haxelib:extension-video-export}/project" />
 	<set name="NATIVE" value="${haxelib:extension-video-export}/native" />
 
 	<files id="common">
 		<file name="${SRCDIR}/common/ExternalInterface.cpp" />
-		<compilerflag value="-ffunction-sections" if="linux" unless="debug || fulldebug"/>
-		<compilerflag value="-fdata-sections" if="linux" unless="debug || fulldebug"/>
+		<compilerflag
+      value="-ffunction-sections"
+      if="linux"
+      unless="debug || fulldebug"
+    />
+		<compilerflag value="-fdata-sections" if="linux" unless="debug || fulldebug" />
 	</files>
 
 	<files id="apple">
-		<compilerflag value="-objc"/>
+		<compilerflag value="-objc" />
+		<compilerflag value="-mmacosx-version-min=10.13" if="macos" />
 		<file name="${NATIVE}/AVAssetWriterEncoder.mm" />
 	</files>
 
@@ -28,23 +33,30 @@
 
 	<files id="linux">
 		<file name="${NATIVE}/openh264_minimp4_encoder.c">
-			<compilerflag value="-I${NATIVE}"/>
+			<compilerflag value="-I${NATIVE}" />
 		</file>
-		<compilerflag value="-ffunction-sections" unless="debug || fulldebug"/>
-		<compilerflag value="-fdata-sections" unless="debug || fulldebug"/>
+		<compilerflag value="-ffunction-sections" unless="debug || fulldebug" />
+		<compilerflag value="-fdata-sections" unless="debug || fulldebug" />
 	</files>
 
-	<set name="SLIBEXT" value=".lib" if="windows"/>
-	<set name="SLIBEXT" value=".a" unless="windows"/>
-	<set name="SLIBEXT" value=".so" if="webos"/>
+	<set name="SLIBEXT" value=".lib" if="windows" />
+	<set name="SLIBEXT" value=".a" unless="windows" />
+	<set name="SLIBEXT" value=".so" if="webos" />
 
 	<set name="DEBUGEXTRA" value="-debug" if="fulldebug" />
 
 	<set name="IOS_SUFFIX" value="" />
 	<set name="IOS_SUFFIX" value=".iphoneos" if="iphoneos" />
+	<set name="IOS_SUFFIX" value=".iphoneos-64" if="iphoneos HXCPP_ARM64" />
 	<set name="IOS_SUFFIX" value=".iphonesim" if="iphonesim" />
+	<set name="IOS_SUFFIX" value=".iphonesim-64" if="iphonesim HXCPP_ARM64" />
 
-	<target id="NDLL" output="${LIBPREFIX}extension_video_export${DEBUGEXTRA}${IOS_SUFFIX}" tool="linker" toolid="${STD_MODULE_LINK}">
+	<target
+    id="NDLL"
+    output="${LIBPREFIX}extension_video_export${DEBUGEXTRA}${IOS_SUFFIX}"
+    tool="linker"
+    toolid="${STD_MODULE_LINK}"
+  >
 		<outdir name="../ndll/${BINDIR}" />
 		<ext value=".ndll" if="windows || macos || linux" />
 		<files id="common" />
@@ -55,11 +67,12 @@
 			<vflag name="-framework" value="CoreMedia" />
 			<vflag name="-framework" value="CoreVideo" />
 			<vflag name="-framework" value="IOSurface" />
+			<vflag name="-framework" value="Metal" />
 			<vflag name="-framework" value="OpenGL" if="macos" />
 			<vflag name="-framework" value="OpenGLES" if="iphoneos || iphonesim" />
-			<lib name="-Wl,-dead_strip" if="macos" unless="debug || fulldebug"/>
+			<lib name="-Wl,-dead_strip" if="macos" unless="debug || fulldebug" />
 			<section unless="MACOSX_DEPLOYMENT_TARGET">
-				<setenv name="MACOSX_DEPLOYMENT_TARGET" value="10.13" unless="HXCPP_ARM64"/>
+				<setenv name="MACOSX_DEPLOYMENT_TARGET" value="10.13" unless="HXCPP_ARM64" />
 				<setenv name="MACOSX_DEPLOYMENT_TARGET" value="11.7" if="HXCPP_ARM64" />
 			</section>
 		</section>
@@ -84,7 +97,7 @@
 		<section if="linux">
 			<files id="linux" />
 			<lib name="-lopenh264" />
-			<lib name="-Wl,--gc-sections" unless="debug || fulldebug"/>
+			<lib name="-Wl,--gc-sections" unless="debug || fulldebug" />
 		</section>
 	</target>
 

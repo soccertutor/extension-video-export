@@ -6,23 +6,23 @@ Encode `BitmapData` frames into an MP4 file using native platform APIs — no ex
 
 ## Platform backends
 
-| Platform | Backend | Notes |
-|----------|---------|-------|
-| macOS / iOS | AVFoundation (AVAssetWriter) | BGRA direct, GPU path (macOS: CGL, iOS: CVOpenGLESTextureCache) |
-| Windows | Media Foundation (IMFSinkWriter) | BGRA direct |
-| Android | NDK AMediaCodec + AMediaMuxer | BGRA to NV12, GPU path (EGL surface input) |
-| Linux | OpenH264 + minimp4 | BGRA to I420 |
+| Platform    | Backend                          | Notes                                          |
+| ----------- | -------------------------------- | ---------------------------------------------- |
+| macOS / iOS | AVFoundation (AVAssetWriter)     | BGRA direct, GPU path (IOSurface + Metal copy) |
+| Windows     | Media Foundation (IMFSinkWriter) | BGRA direct                                    |
+| Android     | NDK AMediaCodec + AMediaMuxer    | BGRA to NV12, GPU path (EGL surface input)     |
+| Linux       | OpenH264 + minimp4               | BGRA to I420                                   |
 
 ## Minimum platform versions
 
-| Platform | Minimum version | Limiting API |
-|----------|-----------------|--------------|
-| macOS (x64) | 10.13 High Sierra | `AVVideoCodecTypeH264` |
-| macOS (ARM64) | 11.7 Big Sur | First macOS on Apple Silicon |
-| iOS | 11.0 | `AVVideoCodecTypeH264` |
-| Windows | 7 | Media Foundation SinkWriter |
-| Android | API 21 (5.0 Lollipop) | NDK AMediaCodec / AMediaMuxer |
-| Linux | Any | Requires `libopenh264` at runtime |
+| Platform      | Minimum version       | Limiting API                      |
+| ------------- | --------------------- | --------------------------------- |
+| macOS (x64)   | 10.13 High Sierra     | `AVVideoCodecTypeH264`            |
+| macOS (ARM64) | 11.7 Big Sur          | First macOS on Apple Silicon      |
+| iOS           | 11.0                  | `AVVideoCodecTypeH264`            |
+| Windows       | 7                     | Media Foundation SinkWriter       |
+| Android       | API 21 (5.0 Lollipop) | NDK AMediaCodec / AMediaMuxer     |
+| Linux         | Any                   | Requires `libopenh264` at runtime |
 
 ## Installation
 
@@ -56,22 +56,22 @@ VideoEncoder.dispose();
 
 ### API
 
-| Method | Signature | Returns |
-|--------|-----------|---------|
-| `init` | `(path, width, height, fps, bitrate)` | `Bool` — true on success |
-| `addFrame` | `(bgraPixels, dataLength)` | `Bool` — true on success |
-| `finish` | `()` | `Bool` — true on success |
-| `dispose` | `()` | `Void` |
-| `getError` | `()` | `Null<String>` — last error message |
+| Method     | Signature                             | Returns                             |
+| ---------- | ------------------------------------- | ----------------------------------- |
+| `init`     | `(path, width, height, fps, bitrate)` | `Bool` — true on success            |
+| `addFrame` | `(bgraPixels, dataLength)`            | `Bool` — true on success            |
+| `finish`   | `()`                                  | `Bool` — true on success            |
+| `dispose`  | `()`                                  | `Void`                              |
+| `getError` | `()`                                  | `Null<String>` — last error message |
 
 All input must be **BGRA** pixel data. Single-instance, not thread-safe — call everything from the same thread.
 
 ### GPU path (macOS / iOS / Android)
 
-Zero-copy encoding — the GPU renders directly into a surface shared with the encoder, avoiding `glReadPixels`.
+GPU-accelerated encoding — the GPU renders and copies frames without CPU pixel readback.
 
-- **macOS / iOS**: IOSurface double-buffered path. GPU writes to one surface while the encoder reads the other. Encoding runs asynchronously on a serial dispatch queue. macOS binds via CGL; iOS via CVOpenGLESTextureCache (OpenGL ES 3.0).
-- **Android**: EGL surface input via `AMediaCodec_createInputSurface`. Frames are blit from the source FBO to the codec's ANativeWindow surface and submitted via `eglSwapBuffers`. Uses `eglPresentationTimeANDROID` for frame timestamps.
+- **macOS / iOS**: IOSurface double-buffered path with Metal copy. GL blits the rendered frame to an IOSurface FBO, then Metal copies it to a **fresh** pooled CVPixelBuffer via `MTLBlitCommandEncoder`. Metal's `waitUntilCompleted` provides the sync barrier that GL lacks — the H.264 encoder holds references to CVPixelBuffers across B-frames (`has_b_frames=2`), so fresh buffers prevent the encoder from reading stale data during reordering. Encoding runs asynchronously on a serial dispatch queue. iOS falls back to PBO readback if Metal is unavailable. `supportsGpuInput()` checks `MTLCreateSystemDefaultDevice()` on both platforms.
+- **Android** (API 26+ / Android 8.0+): EGL surface input via `AMediaCodec_createInputSurface`. Frames are blit from the source FBO to the codec's ANativeWindow surface and submitted via `eglSwapBuffers`. Uses `eglPresentationTimeANDROID` for frame timestamps. On older devices `supportsGpuInput()` returns false and the CPU path is used automatically.
 
 ```haxe
 if (VideoEncoder.supportsGpuInput()) {
@@ -89,27 +89,27 @@ if (VideoEncoder.supportsGpuInput()) {
 }
 ```
 
-| Method | Signature | Returns |
-|--------|-----------|---------|
-| `supportsGpuInput` | `()` | `Bool` — true if GPU path available |
-| `initGpu` | `(path, width, height, fps, bitrate)` | `Bool` — true on success |
-| `getSurfaceId` | `()` | `Int` — IOSurface ID (0 = none) |
-| `submitGpuFrame` | `()` | `Bool` — true on success |
-| `setupIoSurfaceFbo` | `(width, height)` | `Bool` — true on success |
-| `blitToIoSurface` | `(srcFboId, width, height)` | `Void` |
-| `disposeIoSurfaceFbo` | `()` | `Void` |
+| Method                | Signature                             | Returns                             |
+| --------------------- | ------------------------------------- | ----------------------------------- |
+| `supportsGpuInput`    | `()`                                  | `Bool` — true if GPU path available |
+| `initGpu`             | `(path, width, height, fps, bitrate)` | `Bool` — true on success            |
+| `getSurfaceId`        | `()`                                  | `Int` — IOSurface ID (0 = none)     |
+| `submitGpuFrame`      | `()`                                  | `Bool` — true on success            |
+| `setupIoSurfaceFbo`   | `(width, height)`                     | `Bool` — true on success            |
+| `blitToIoSurface`     | `(srcFboId, width, height)`           | `Void`                              |
+| `disposeIoSurfaceFbo` | `()`                                  | `Void`                              |
 
 ## Building from source
 
 ### Prerequisites
 
-| Platform | Requirement |
-|----------|-------------|
-| macOS | Xcode (AVFoundation, IOSurface, OpenGL) |
-| iOS | Xcode (AVFoundation, IOSurface, OpenGLES) |
-| Windows | MSVC (Media Foundation) |
-| Linux | `libopenh264-dev` |
-| Android | NDK r26c+ (EGL, GLESv3) |
+| Platform | Requirement                                      |
+| -------- | ------------------------------------------------ |
+| macOS    | Xcode (AVFoundation, IOSurface, Metal, OpenGL)   |
+| iOS      | Xcode (AVFoundation, IOSurface, Metal, OpenGLES) |
+| Windows  | MSVC (Media Foundation)                          |
+| Linux    | `libopenh264-dev`                                |
+| Android  | NDK r26c+ (EGL, GLESv3)                          |
 
 ### IDE support (optional)
 

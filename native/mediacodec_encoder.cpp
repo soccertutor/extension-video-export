@@ -595,7 +595,7 @@ const char* videoEncoderGetError(void) {
 }
 
 int videoEncoderSupportsGpuInput(void) {
-	return AMediaCodec_createInputSurface && AMediaCodec_signalEndOfInputStream;
+	return (void*)AMediaCodec_createInputSurface != NULL && (void*)AMediaCodec_signalEndOfInputStream != NULL;
 }
 
 int videoEncoderInitGpu(const char* outputPath, int width, int height, int fps, int bitrate) {
@@ -648,7 +648,7 @@ int videoEncoderInitGpu(const char* outputPath, int width, int height, int fps, 
 	}
 
 	// Get input surface from codec (before start) — API 26+, guarded by weak symbol
-	if (!AMediaCodec_createInputSurface) {
+	if ((void*)AMediaCodec_createInputSurface == NULL) {
 		setError("GPU encoding requires Android 8.0+ (API 26)");
 		releaseResources();
 		return -1;
