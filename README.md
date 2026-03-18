@@ -132,8 +132,15 @@ cd project && haxelib run hxcpp Build.xml && cd ..
 ### Run tests
 
 ```bash
+# macOS smoke test (Haxe)
 haxe test.hxml
 ./test/bin/TestEncode
+
+# iOS simulator test
+./test/ios/run.sh
+
+# Android emulator test (needs ANDROID_HOME + NDK)
+./test/android/run.sh
 ```
 
 ## License
