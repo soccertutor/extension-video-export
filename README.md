@@ -1,5 +1,9 @@
 # extension-video-export
 
+[![Build](https://github.com/soccertutor/extension-video-export/actions/workflows/build.yml/badge.svg)](https://github.com/soccertutor/extension-video-export/actions/workflows/build.yml)
+[![Haxelib](https://img.shields.io/badge/haxelib-v0.2.0-blue)](https://lib.haxe.org/p/extension-video-export/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 Cross-platform H.264/MP4 video encoder for [OpenFL](https://www.openfl.org/) / hxcpp.
 
 Encode `BitmapData` frames into an MP4 file using native platform APIs — no external processes, no FFmpeg dependency.

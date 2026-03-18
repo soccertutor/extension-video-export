@@ -217,7 +217,7 @@ jobs:
           xcrun simctl delete "$UDID"
 
   publish:
-    needs: [detect-release, build]
+    needs: [detect-release, build, test-android, test-ios]
     runs-on: ubuntu-latest
     if: needs.detect-release.outputs.is_release == 'true'
     permissions:

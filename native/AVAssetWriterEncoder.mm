@@ -276,11 +276,12 @@ int videoEncoderAddFrame(const unsigned char *bgraPixels, int dataLength) {
 
 		// Wait until the input is ready — drain the run loop so AVAssetWriter's
 		// internal completion handlers fire (flips isReadyForMoreMediaData).
-		// Much faster than a fixed-interval sleep; returns immediately when a
-		// source fires.  5-second total timeout preserved.
+		// CFRunLoopRunInMode returns immediately if no sources are registered
+		// (e.g. standalone CLI tests), so usleep provides the actual delay.
 		int waitRetries = 0;
 		while (!writer_input_.isReadyForMoreMediaData) {
 			CFRunLoopRunInMode(kCFRunLoopDefaultMode, READY_WAIT_INTERVAL, true);
+			usleep(ASYNC_POLL_INTERVAL_US);
 			if (++waitRetries > READY_WAIT_MAX_RETRIES) {
 				setError(@"Timed out waiting for writer input to become ready");
 				return -1;
