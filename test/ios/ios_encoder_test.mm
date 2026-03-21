@@ -28,9 +28,9 @@ int videoEncoderSupportsGpuInput(void);
 int videoEncoderInitGpu(const char* outputPath, int width, int height, int fps, int bitrate, int keyframeInterval);
 unsigned int videoEncoderGetSurfaceId(void);
 int videoEncoderSubmitGpuFrame(void);
-int videoEncoderSetupIoSurfaceFbo(int width, int height);
-void videoEncoderBlitToIoSurface(unsigned int srcFbo, int width, int height);
-void videoEncoderDisposeIoSurfaceFbo(void);
+int videoEncoderSetupGpuFbo(int width, int height);
+void videoEncoderBlitGpuFrame(unsigned int srcFbo, int width, int height);
+void videoEncoderDisposeGpuFbo(void);
 }
 
 // ---------------------------------------------------------------------------
@@ -245,14 +245,14 @@ static int testGpuEncode() {
 	}
 	encoder_init = true;
 
-	if (videoEncoderSetupIoSurfaceFbo(WIDTH_ALIGNED, HEIGHT_ALIGNED) != 0) {
-		printf("  GPU test SKIPPED (setupIoSurfaceFbo failed: %s)\n", videoEncoderGetError() ?: "unknown");
+	if (videoEncoderSetupGpuFbo(WIDTH_ALIGNED, HEIGHT_ALIGNED) != 0) {
+		printf("  GPU test SKIPPED (setupGpuFbo failed: %s)\n", videoEncoderGetError() ?: "unknown");
 		goto cleanup;
 	}
 	fbo_init = true;
 
 	for (int i = 0; i < FRAME_COUNT; i++) {
-		videoEncoderBlitToIoSurface(srcFbo, WIDTH_ALIGNED, HEIGHT_ALIGNED);
+		videoEncoderBlitGpuFrame(srcFbo, WIDTH_ALIGNED, HEIGHT_ALIGNED);
 		if (videoEncoderSubmitGpuFrame() != 0) {
 			printf("  GPU test FAILED at frame %d: submitGpuFrame error\n", i);
 			goto cleanup;
@@ -276,7 +276,7 @@ static int testGpuEncode() {
 	result = 0;
 
 cleanup:
-	if (fbo_init) videoEncoderDisposeIoSurfaceFbo();
+	if (fbo_init) videoEncoderDisposeGpuFbo();
 	if (encoder_init) videoEncoderDispose();
 	if (srcFbo) glDeleteFramebuffers(1, &srcFbo);
 	if (srcTex) glDeleteTextures(1, &srcTex);

@@ -542,18 +542,18 @@ int videoEncoderSubmitGpuFrame(void) {
 	return -1;
 }
 
-int videoEncoderSetupIoSurfaceFbo(int width, int height) {
+int videoEncoderSetupGpuFbo(int width, int height) {
 	(void)width;
 	(void)height;
 	setError("GPU input not supported on Linux");
 	return -1;
 }
 
-void videoEncoderBlitToIoSurface(unsigned int src_fbo, int width, int height) {
+void videoEncoderBlitGpuFrame(unsigned int src_fbo, int width, int height) {
 	(void)src_fbo;
 	(void)width;
 	(void)height;
 }
 
-void videoEncoderDisposeIoSurfaceFbo(void) {
+void videoEncoderDisposeGpuFbo(void) {
 }

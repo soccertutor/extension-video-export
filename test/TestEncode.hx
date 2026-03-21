@@ -55,9 +55,9 @@ import haxe.io.Bytes;
 			// initGpu to a temp file — will succeed (AVAssetWriter doesn't need GL)
 			check(VideoEncoder.initGpu(OUTPUT, ALIGNED_SIZE, ALIGNED_SIZE, FPS, BITRATE), 'GPU initGpu');
 
-			// setupIoSurfaceFbo should fail (no GL context) but not crash
-			final fboOk: Bool = VideoEncoder.setupIoSurfaceFbo(ALIGNED_SIZE, ALIGNED_SIZE);
-			Sys.println('  setupIoSurfaceFbo (no GL): $fboOk — expected false');
+			// setupGpuFbo should fail (no GL context) but not crash
+			final fboOk: Bool = VideoEncoder.setupGpuFbo(ALIGNED_SIZE, ALIGNED_SIZE);
+			Sys.println('  setupGpuFbo (no GL): $fboOk — expected false');
 
 			VideoEncoder.dispose();
 			if (sys.FileSystem.exists(OUTPUT)) sys.FileSystem.deleteFile(OUTPUT);

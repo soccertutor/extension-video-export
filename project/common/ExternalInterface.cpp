@@ -18,9 +18,9 @@ int videoEncoderSupportsGpuInput(void);
 int videoEncoderInitGpu(const char* outputPath, int width, int height, int fps, int bitrate, int keyframeInterval);
 unsigned int videoEncoderGetSurfaceId(void);
 int videoEncoderSubmitGpuFrame(void);
-int videoEncoderSetupIoSurfaceFbo(int width, int height);
-void videoEncoderBlitToIoSurface(unsigned int srcFbo, int width, int height);
-void videoEncoderDisposeIoSurfaceFbo(void);
+int videoEncoderSetupGpuFbo(int width, int height);
+void videoEncoderBlitGpuFrame(unsigned int srcFbo, int width, int height);
+void videoEncoderDisposeGpuFbo(void);
 }
 
 int ve_init(const char* path, int w, int h, int fps, int br, int kfi) {
@@ -61,7 +61,7 @@ int ve_initGpu(const char* path, int w, int h, int fps, int br, int kfi) {
 }
 DEFINE_PRIME6(ve_initGpu);
 
-// IOSurfaceID is uint32_t; CFFI Prime has no unsigned type, so we narrow to int.
+// SurfaceID is uint32_t; CFFI Prime has no unsigned type, so we narrow to int.
 // Bit pattern is preserved — callers should compare != 0, not > 0.
 int ve_getSurfaceId() {
 	return (int)videoEncoderGetSurfaceId();
@@ -73,20 +73,20 @@ int ve_submitGpuFrame() {
 }
 DEFINE_PRIME0(ve_submitGpuFrame);
 
-int ve_setupIoSurfaceFbo(int w, int h) {
-	return videoEncoderSetupIoSurfaceFbo(w, h);
+int ve_setupGpuFbo(int w, int h) {
+	return videoEncoderSetupGpuFbo(w, h);
 }
-DEFINE_PRIME2(ve_setupIoSurfaceFbo);
+DEFINE_PRIME2(ve_setupGpuFbo);
 
-void ve_blitToIoSurface(int srcFbo, int w, int h) {
-	videoEncoderBlitToIoSurface((unsigned int)srcFbo, w, h);
+void ve_blitGpuFrame(int srcFbo, int w, int h) {
+	videoEncoderBlitGpuFrame((unsigned int)srcFbo, w, h);
 }
-DEFINE_PRIME3v(ve_blitToIoSurface);
+DEFINE_PRIME3v(ve_blitGpuFrame);
 
-void ve_disposeIoSurfaceFbo() {
-	videoEncoderDisposeIoSurfaceFbo();
+void ve_disposeGpuFbo() {
+	videoEncoderDisposeGpuFbo();
 }
-DEFINE_PRIME0v(ve_disposeIoSurfaceFbo);
+DEFINE_PRIME0v(ve_disposeGpuFbo);
 
 extern "C" void extension_video_export_main() {
 	val_int(0);

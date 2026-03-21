@@ -41,18 +41,24 @@ import haxe.io.BytesData;
 
 	private static final _ve_submitGpuFrame: Callable<Void -> Int> = Prime.load('extension_video_export', 've_submitGpuFrame', 'i', false);
 
-	private static final _ve_setupIoSurfaceFbo: Callable<Int -> Int -> Int> = Prime.load('extension_video_export', 've_setupIoSurfaceFbo',
-		'iii', false);
+	private static final _ve_setupGpuFbo: Callable<Int -> Int -> Int> = Prime.load('extension_video_export', 've_setupGpuFbo', 'iii', false);
 
-	private static final _ve_blitToIoSurface: Callable<Int -> Int -> Int -> cpp.Void> = Prime.load('extension_video_export',
-		've_blitToIoSurface', 'iiiv', false);
+	private static final _ve_blitGpuFrame: Callable<Int -> Int -> Int -> cpp.Void> = Prime.load('extension_video_export', 've_blitGpuFrame',
+		'iiiv', false);
 
-	private static final _ve_disposeIoSurfaceFbo: Callable<Void -> cpp.Void> = Prime.load('extension_video_export',
-		've_disposeIoSurfaceFbo', 'v', false);
+	private static final _ve_disposeGpuFbo: Callable<Void -> cpp.Void> = Prime.load('extension_video_export', 've_disposeGpuFbo', 'v',
+		false);
 
 	public static inline function init(outputPath: String, width: Int, height: Int, fps: Int,
 			bitrate: Int, keyframeInterval: Int = DEFAULT_KEYFRAME_INTERVAL): Bool return _ve_init(outputPath, width, height, fps, bitrate, keyframeInterval) == 0;
 
+	/**
+	 * Add a BGRA frame via CPU path. Expects top-down pixel data (first byte = top-left).
+	 *
+	 * WARNING: raw glReadPixels returns bottom-up data (OpenGL convention). Passing it
+	 * directly produces upside-down video on Windows, Android, and Linux.
+	 * Either flip rows before calling, or use the GPU path (blitGpuFrame) instead.
+	 */
 	public static inline function addFrame(bgraPixels: BytesData, dataLength: Int): Bool return _ve_addFrame(bgraPixels, dataLength) == 0;
 
 	public static inline function finish(): Bool return _ve_finish() == 0;
@@ -64,24 +70,23 @@ import haxe.io.BytesData;
 	/** Whether the platform supports zero-copy GPU texture input. */
 	public static inline function supportsGpuInput(): Bool return _ve_supportsGpuInput() != 0;
 
-	/** Initialize encoder in GPU mode. Returns IOSurface ID via getSurfaceId(). */
+	/** Initialize encoder in GPU mode. */
 	public static inline function initGpu(outputPath: String, width: Int, height: Int, fps: Int,
 			bitrate: Int, keyframeInterval: Int = DEFAULT_KEYFRAME_INTERVAL): Bool return _ve_initGpu(outputPath, width, height, fps, bitrate, keyframeInterval) == 0;
 
-	/** Get IOSurface ID for binding as GL texture. 0 means no surface. Use != 0 to check validity (not > 0). */
+	/** Get platform surface ID for binding as GL texture. 0 means no surface. Use != 0 to check validity (not > 0). */
 	public static inline function getSurfaceId(): Int return _ve_getSurfaceId();
 
 	/** Submit the current GPU frame (no pixel data — reads from shared surface). */
 	public static inline function submitGpuFrame(): Bool return _ve_submitGpuFrame() == 0;
 
-	/** Set up double-buffered IOSurface-backed FBOs for GPU-direct blit. Returns true on success. */
-	public static inline function setupIoSurfaceFbo(width: Int, height: Int): Bool return _ve_setupIoSurfaceFbo(width, height) == 0;
+	/** Set up GPU FBO for blit path. Returns true on success. */
+	public static inline function setupGpuFbo(width: Int, height: Int): Bool return _ve_setupGpuFbo(width, height) == 0;
 
-	/** Blit from source FBO to IOSurface FBO (GPU-side copy). */
-	public static inline function blitToIoSurface(srcFboId: Int, width: Int,
-			height: Int): Void _ve_blitToIoSurface(srcFboId, width, height);
+	/** Blit from source FBO to encoder surface (GPU-side copy, handles Y-flip internally). */
+	public static inline function blitGpuFrame(srcFboId: Int, width: Int, height: Int): Void _ve_blitGpuFrame(srcFboId, width, height);
 
-	/** Dispose IOSurface FBO GL resources. */
-	public static inline function disposeIoSurfaceFbo(): Void _ve_disposeIoSurfaceFbo();
+	/** Dispose GPU FBO resources. */
+	public static inline function disposeGpuFbo(): Void _ve_disposeGpuFbo();
 
 }

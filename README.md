@@ -11,7 +11,7 @@ Encode `BitmapData` frames into an MP4 file using native platform APIs — no ex
 | Platform    | Backend                          | Notes                                          |
 | ----------- | -------------------------------- | ---------------------------------------------- |
 | macOS / iOS | AVFoundation (AVAssetWriter)     | BGRA direct, GPU path (IOSurface + Metal copy) |
-| Windows     | Media Foundation (IMFSinkWriter) | BGRA direct                                    |
+| Windows     | Media Foundation (IMFSinkWriter) | BGRA direct, GPU path (D3D11 interop / fallback) |
 | Android     | NDK AMediaCodec + AMediaMuxer    | BGRA to NV12, GPU path (EGL surface input)     |
 | Linux       | OpenH264 + minimp4               | BGRA to I420                                   |
 
@@ -68,25 +68,37 @@ VideoEncoder.dispose();
 
 All input must be **BGRA** pixel data. Single-instance, not thread-safe — call everything from the same thread.
 
-### GPU path (macOS / iOS / Android)
+### CPU path pixel order
 
-GPU-accelerated encoding — the GPU renders and copies frames without CPU pixel readback.
+`addFrame()` expects **top-down** BGRA data (first byte = top-left pixel). This matches `BitmapData.getPixels()` on all platforms.
+
+**Important**: raw `glReadPixels` returns **bottom-up** data (OpenGL convention). Passing it directly to `addFrame()` will produce upside-down video on Windows, Android, and Linux. Two solutions:
+
+1. **Use the GPU path instead** — `blitGpuFrame()` handles orientation internally on all platforms. This is the recommended approach.
+2. **Flip rows before `addFrame()`** — either with a Y-flip shader blit pass before `glReadPixels`, or by reversing rows in CPU after readback.
+
+macOS/iOS are unaffected because AVFoundation handles bottom-up input internally via CVPixelBuffer attributes.
+
+### GPU path (macOS / iOS / Android / Windows)
+
+GPU-accelerated encoding — the GPU renders and copies frames without CPU pixel readback. `blitGpuFrame()` accepts an OpenGL FBO id and handles all platform-specific transfer and Y-flip internally.
 
 - **macOS / iOS**: IOSurface double-buffered path with Metal copy. GL blits the rendered frame to an IOSurface FBO, then Metal copies it to a **fresh** pooled CVPixelBuffer via `MTLBlitCommandEncoder`. Metal's `waitUntilCompleted` provides the sync barrier that GL lacks — the H.264 encoder holds references to CVPixelBuffers across B-frames (`has_b_frames=2`), so fresh buffers prevent the encoder from reading stale data during reordering. Encoding runs asynchronously on a serial dispatch queue. iOS falls back to PBO readback if Metal is unavailable. `supportsGpuInput()` checks `MTLCreateSystemDefaultDevice()` on both platforms.
 - **Android** (API 26+ / Android 8.0+): EGL surface input via `AMediaCodec_createInputSurface`. Frames are blit from the source FBO to the codec's ANativeWindow surface and submitted via `eglSwapBuffers`. Uses `eglPresentationTimeANDROID` for frame timestamps. On older devices `supportsGpuInput()` returns false and the CPU path is used automatically.
+- **Windows**: Two runtime strategies, selected automatically at init. Primary: D3D11 interop via `WGL_NV_DX_interop2` — zero-copy blit from GL to a D3D11 texture fed to Media Foundation (available on NVIDIA and some AMD drivers). Fallback: internal `glBlitFramebuffer` + `glReadPixels` into Media Foundation (universal, works on all GPUs including Intel integrated). `supportsGpuInput()` always returns true.
 
 ```haxe
 if (VideoEncoder.supportsGpuInput()) {
     VideoEncoder.initGpu("output.mp4", 1280, 720, 30, 4000000);
-    VideoEncoder.setupIoSurfaceFbo(1280, 720);
+    VideoEncoder.setupGpuFbo(1280, 720);
 
     // Per frame: blit from your FBO, then submit
-    VideoEncoder.blitToIoSurface(myFboId, 1280, 720);
+    VideoEncoder.blitGpuFrame(myFboId, 1280, 720);
     VideoEncoder.submitGpuFrame();
 
     // Finalize
     VideoEncoder.finish();
-    VideoEncoder.disposeIoSurfaceFbo();
+    VideoEncoder.disposeGpuFbo();
     VideoEncoder.dispose();
 }
 ```
@@ -95,11 +107,11 @@ if (VideoEncoder.supportsGpuInput()) {
 | --------------------- | ------------------------------------- | ----------------------------------- |
 | `supportsGpuInput`    | `()`                                  | `Bool` — true if GPU path available |
 | `initGpu`             | `(path, width, height, fps, bitrate, keyframeInterval=2)` | `Bool` — true on success            |
-| `getSurfaceId`        | `()`                                  | `Int` — IOSurface ID (0 = none)     |
+| `getSurfaceId`        | `()`                                  | `Int` — surface ID (0 = none)       |
 | `submitGpuFrame`      | `()`                                  | `Bool` — true on success            |
-| `setupIoSurfaceFbo`   | `(width, height)`                     | `Bool` — true on success            |
-| `blitToIoSurface`     | `(srcFboId, width, height)`           | `Void`                              |
-| `disposeIoSurfaceFbo` | `()`                                  | `Void`                              |
+| `setupGpuFbo`         | `(width, height)`                     | `Bool` — true on success            |
+| `blitGpuFrame`        | `(srcFboId, width, height)`           | `Void`                              |
+| `disposeGpuFbo`       | `()`                                  | `Void`                              |
 
 ## Building from source
 
@@ -109,7 +121,7 @@ if (VideoEncoder.supportsGpuInput()) {
 | -------- | ------------------------------------------------ |
 | macOS    | Xcode (AVFoundation, IOSurface, Metal, OpenGL)   |
 | iOS      | Xcode (AVFoundation, IOSurface, Metal, OpenGLES) |
-| Windows  | MSVC (Media Foundation)                          |
+| Windows  | MSVC (Media Foundation, D3D11, OpenGL)           |
 | Linux    | `libopenh264-dev`                                |
 | Android  | NDK r26c+ (EGL, GLESv3)                          |
 

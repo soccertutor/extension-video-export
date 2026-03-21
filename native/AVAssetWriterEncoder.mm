@@ -475,7 +475,7 @@ int videoEncoderInitGpu(const char *outputPath, int width, int height, int fps, 
 		}
 #else
 		// iOS: create IOSurface-backed CVPixelBuffers via CoreVideo API.
-		// CVOpenGLESTextureCache will bind them to GL textures in setupIoSurfaceFbo.
+		// CVOpenGLESTextureCache will bind them to GL textures in setupGpuFbo.
 		NSDictionary *pbAttrs = @{
 			(NSString *)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA),
 			(NSString *)kCVPixelBufferWidthKey : @(width),
@@ -585,7 +585,7 @@ int videoEncoderSubmitGpuFrame(void) {
 	}
 }
 
-int videoEncoderSetupIoSurfaceFbo(int width, int height) {
+int videoEncoderSetupGpuFbo(int width, int height) {
 #if TARGET_OS_OSX
 	CGLContextObj cgl_ctx = CGLGetCurrentContext();
 	if (!cgl_ctx) return -1;
@@ -705,7 +705,7 @@ int videoEncoderSetupIoSurfaceFbo(int width, int height) {
 	return 0;
 }
 
-void videoEncoderBlitToIoSurface(unsigned int srcFbo, int width, int height) {
+void videoEncoderBlitGpuFrame(unsigned int srcFbo, int width, int height) {
 	if (!buffer_sema_[current_buf_]) {
 		setError(@"Blit called before GPU encoder initialized");
 		return;
@@ -829,7 +829,7 @@ void videoEncoderBlitToIoSurface(unsigned int srcFbo, int width, int height) {
 	blit_fence_ = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 }
 
-void videoEncoderDisposeIoSurfaceFbo(void) {
+void videoEncoderDisposeGpuFbo(void) {
 	releaseGpuFbos();
 }
 

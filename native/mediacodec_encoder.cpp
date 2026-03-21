@@ -501,6 +501,10 @@ int videoEncoderInit(const char* outputPath, int width, int height, int fps, int
 	return 0;
 }
 
+/**
+ * Add a BGRA frame via CPU path. Expects top-down pixel data (first byte = top-left).
+ * Raw glReadPixels gives bottom-up data — flip rows before calling, or use the GPU path instead.
+ */
 int videoEncoderAddFrame(const unsigned char* bgraPixels, int dataLength) {
 	clearError();
 
@@ -779,7 +783,7 @@ int videoEncoderSubmitGpuFrame(void) {
 	return 0;
 }
 
-int videoEncoderSetupIoSurfaceFbo(int width, int height) {
+int videoEncoderSetupGpuFbo(int width, int height) {
 	clearError();
 	if (!gpu_mode_) {
 		setError("GPU encoder not initialized");
@@ -791,7 +795,7 @@ int videoEncoderSetupIoSurfaceFbo(int width, int height) {
 	return 0;
 }
 
-void videoEncoderBlitToIoSurface(unsigned int srcFbo, int width, int height) {
+void videoEncoderBlitGpuFrame(unsigned int srcFbo, int width, int height) {
 	// Use caller's context with encoder surface — srcFbo is valid in caller's context
 	const EglState saved = saveEglState();
 	eglMakeCurrent(egl_display_, egl_surface_, egl_surface_, saved.context);
@@ -809,7 +813,7 @@ void videoEncoderBlitToIoSurface(unsigned int srcFbo, int width, int height) {
 	restoreEglState(saved);
 }
 
-void videoEncoderDisposeIoSurfaceFbo(void) {
+void videoEncoderDisposeGpuFbo(void) {
 	releaseGpuResources();
 }
 

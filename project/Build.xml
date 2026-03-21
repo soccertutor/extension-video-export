@@ -45,7 +45,7 @@
 
 	<target
     id="NDLL"
-    output="${LIBPREFIX}extension_video_export${LIBEXTRA}"
+    output="${LIBPREFIX}extension_video_export"
     tool="linker"
     toolid="${STD_MODULE_LINK}"
   >
@@ -77,6 +77,9 @@
 			<lib name="mf.lib" />
 			<lib name="mfuuid.lib" />
 			<lib name="ole32.lib" />
+			<lib name="d3d11.lib" />
+			<lib name="dxgi.lib" />
+			<lib name="opengl32.lib" />
 		</section>
 
 		<section if="android">
