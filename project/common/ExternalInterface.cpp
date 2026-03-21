@@ -9,13 +9,13 @@
 #include <hx/CFFIPrime.h>
 
 extern "C" {
-int videoEncoderInit(const char* outputPath, int width, int height, int fps, int bitrate);
+int videoEncoderInit(const char* outputPath, int width, int height, int fps, int bitrate, int keyframeInterval);
 int videoEncoderAddFrame(const unsigned char* bgraPixels, int dataLength);
 int videoEncoderFinish(void);
 void videoEncoderDispose(void);
 const char* videoEncoderGetError(void);
 int videoEncoderSupportsGpuInput(void);
-int videoEncoderInitGpu(const char* outputPath, int width, int height, int fps, int bitrate);
+int videoEncoderInitGpu(const char* outputPath, int width, int height, int fps, int bitrate, int keyframeInterval);
 unsigned int videoEncoderGetSurfaceId(void);
 int videoEncoderSubmitGpuFrame(void);
 int videoEncoderSetupIoSurfaceFbo(int width, int height);
@@ -23,10 +23,10 @@ void videoEncoderBlitToIoSurface(unsigned int srcFbo, int width, int height);
 void videoEncoderDisposeIoSurfaceFbo(void);
 }
 
-int ve_init(const char* path, int w, int h, int fps, int br) {
-	return videoEncoderInit(path, w, h, fps, br);
+int ve_init(const char* path, int w, int h, int fps, int br, int kfi) {
+	return videoEncoderInit(path, w, h, fps, br, kfi);
 }
-DEFINE_PRIME5(ve_init);
+DEFINE_PRIME6(ve_init);
 
 int ve_addFrame(value pixels, int len) {
 	buffer buf = val_to_buffer(pixels);
@@ -56,10 +56,10 @@ int ve_supportsGpuInput() {
 }
 DEFINE_PRIME0(ve_supportsGpuInput);
 
-int ve_initGpu(const char* path, int w, int h, int fps, int br) {
-	return videoEncoderInitGpu(path, w, h, fps, br);
+int ve_initGpu(const char* path, int w, int h, int fps, int br, int kfi) {
+	return videoEncoderInitGpu(path, w, h, fps, br, kfi);
 }
-DEFINE_PRIME5(ve_initGpu);
+DEFINE_PRIME6(ve_initGpu);
 
 // IOSurfaceID is uint32_t; CFFI Prime has no unsigned type, so we narrow to int.
 // Bit pattern is preserved — callers should compare != 0, not > 0.

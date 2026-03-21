@@ -165,7 +165,7 @@ static void releaseGpuFbos(void) {
  * start writing session. Sets width_/height_/fps_/frame_index_ on success.
  * On failure, sets error and nils writer_/writer_input_/adaptor_. Returns 0/-1.
  */
-static int initAssetWriter(const char *outputPath, int width, int height, int fps, int bitrate) {
+static int initAssetWriter(const char *outputPath, int width, int height, int fps, int bitrate, int keyframeInterval) {
 	// Remove existing file
 	NSString *path = [NSString stringWithUTF8String:outputPath];
 	NSFileManager *fm = [NSFileManager defaultManager];
@@ -188,6 +188,7 @@ static int initAssetWriter(const char *outputPath, int width, int height, int fp
 	else
 		codecType = @"avc1";
 
+	// AVAssetWriter always uses VBR with AverageBitRateKey
 	NSDictionary *videoSettings = @{
 		AVVideoCodecKey : codecType,
 		AVVideoWidthKey : @(width),
@@ -195,7 +196,8 @@ static int initAssetWriter(const char *outputPath, int width, int height, int fp
 		AVVideoCompressionPropertiesKey : @{
 			AVVideoAverageBitRateKey : @(bitrate),
 			AVVideoProfileLevelKey : AVVideoProfileLevelH264HighAutoLevel,
-			AVVideoExpectedSourceFrameRateKey : @(fps)
+			AVVideoExpectedSourceFrameRateKey : @(fps),
+			AVVideoMaxKeyFrameIntervalDurationKey : @(keyframeInterval)
 		}
 	};
 
@@ -246,16 +248,16 @@ static int initAssetWriter(const char *outputPath, int width, int height, int fp
 
 extern "C" {
 
-int videoEncoderInit(const char *outputPath, int width, int height, int fps, int bitrate) {
+int videoEncoderInit(const char *outputPath, int width, int height, int fps, int bitrate, int keyframeInterval) {
 	@autoreleasepool {
 		clearError();
 
-		if (width <= 0 || height <= 0 || fps <= 0 || bitrate <= 0) {
+		if (width <= 0 || height <= 0 || fps <= 0 || bitrate <= 0 || keyframeInterval <= 0) {
 			setError(@"Invalid encoder parameters");
 			return -1;
 		}
 
-		return initAssetWriter(outputPath, width, height, fps, bitrate);
+		return initAssetWriter(outputPath, width, height, fps, bitrate, keyframeInterval);
 	}
 }
 
@@ -419,11 +421,11 @@ int videoEncoderSupportsGpuInput(void) {
 	return device != nil ? 1 : 0;
 }
 
-int videoEncoderInitGpu(const char *outputPath, int width, int height, int fps, int bitrate) {
+int videoEncoderInitGpu(const char *outputPath, int width, int height, int fps, int bitrate, int keyframeInterval) {
 	@autoreleasepool {
 		clearError();
 
-		if (width <= 0 || height <= 0 || fps <= 0 || bitrate <= 0) {
+		if (width <= 0 || height <= 0 || fps <= 0 || bitrate <= 0 || keyframeInterval <= 0) {
 			setError(@"Invalid encoder parameters");
 			return -1;
 		}
@@ -502,7 +504,7 @@ int videoEncoderInitGpu(const char *outputPath, int width, int height, int fps, 
 #endif
 		current_buf_ = 0;
 
-		if (initAssetWriter(outputPath, width, height, fps, bitrate) != 0) {
+		if (initAssetWriter(outputPath, width, height, fps, bitrate, keyframeInterval) != 0) {
 			releaseGpuBuffers();
 			return -1;
 		}

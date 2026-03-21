@@ -43,7 +43,7 @@ Then add the dependency to your `project.xml`:
 ```haxe
 import extension.videoexport.VideoEncoder;
 
-// Initialize encoder: output path, width, height, fps, bitrate
+// Initialize encoder: output path, width, height, fps, bitrate (keyframeInterval defaults to 2s)
 VideoEncoder.init("output.mp4", 1280, 720, 30, 4000000);
 
 // Feed BGRA frames (matches OpenFL BitmapData layout)
@@ -60,7 +60,7 @@ VideoEncoder.dispose();
 
 | Method     | Signature                             | Returns                             |
 | ---------- | ------------------------------------- | ----------------------------------- |
-| `init`     | `(path, width, height, fps, bitrate)` | `Bool` — true on success            |
+| `init`     | `(path, width, height, fps, bitrate, keyframeInterval=2)` | `Bool` — true on success            |
 | `addFrame` | `(bgraPixels, dataLength)`            | `Bool` — true on success            |
 | `finish`   | `()`                                  | `Bool` — true on success            |
 | `dispose`  | `()`                                  | `Void`                              |
@@ -94,7 +94,7 @@ if (VideoEncoder.supportsGpuInput()) {
 | Method                | Signature                             | Returns                             |
 | --------------------- | ------------------------------------- | ----------------------------------- |
 | `supportsGpuInput`    | `()`                                  | `Bool` — true if GPU path available |
-| `initGpu`             | `(path, width, height, fps, bitrate)` | `Bool` — true on success            |
+| `initGpu`             | `(path, width, height, fps, bitrate, keyframeInterval=2)` | `Bool` — true on success            |
 | `getSurfaceId`        | `()`                                  | `Int` — IOSurface ID (0 = none)     |
 | `submitGpuFrame`      | `()`                                  | `Bool` — true on success            |
 | `setupIoSurfaceFbo`   | `(width, height)`                     | `Bool` — true on success            |

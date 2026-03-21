@@ -18,8 +18,10 @@ import haxe.io.BytesData;
  */
 @:nullSafety(Strict) final class VideoEncoder {
 
-	private static final _ve_init: Callable<ConstCharStar -> Int -> Int -> Int -> Int -> Int> = Prime.load('extension_video_export',
-		've_init', 'ciiiii', false);
+	private static inline final DEFAULT_KEYFRAME_INTERVAL:Int = 2;
+
+	private static final _ve_init: Callable<ConstCharStar -> Int -> Int -> Int -> Int -> Int -> Int> = Prime.load('extension_video_export',
+		've_init', 'ciiiiii', false);
 
 	private static final _ve_addFrame: Callable<Object -> Int -> Int> = Prime.load('extension_video_export', 've_addFrame', 'oii', false);
 
@@ -32,8 +34,8 @@ import haxe.io.BytesData;
 	private static final _ve_supportsGpuInput: Callable<Void -> Int> = Prime.load('extension_video_export', 've_supportsGpuInput', 'i',
 		false);
 
-	private static final _ve_initGpu: Callable<ConstCharStar -> Int -> Int -> Int -> Int -> Int> = Prime.load('extension_video_export',
-		've_initGpu', 'ciiiii', false);
+	private static final _ve_initGpu: Callable<ConstCharStar -> Int -> Int -> Int -> Int -> Int -> Int> = Prime.load('extension_video_export',
+		've_initGpu', 'ciiiiii', false);
 
 	private static final _ve_getSurfaceId: Callable<Void -> Int> = Prime.load('extension_video_export', 've_getSurfaceId', 'i', false);
 
@@ -49,7 +51,7 @@ import haxe.io.BytesData;
 		've_disposeIoSurfaceFbo', 'v', false);
 
 	public static inline function init(outputPath: String, width: Int, height: Int, fps: Int,
-			bitrate: Int): Bool return _ve_init(outputPath, width, height, fps, bitrate) == 0;
+			bitrate: Int, keyframeInterval: Int = DEFAULT_KEYFRAME_INTERVAL): Bool return _ve_init(outputPath, width, height, fps, bitrate, keyframeInterval) == 0;
 
 	public static inline function addFrame(bgraPixels: BytesData, dataLength: Int): Bool return _ve_addFrame(bgraPixels, dataLength) == 0;
 
@@ -64,7 +66,7 @@ import haxe.io.BytesData;
 
 	/** Initialize encoder in GPU mode. Returns IOSurface ID via getSurfaceId(). */
 	public static inline function initGpu(outputPath: String, width: Int, height: Int, fps: Int,
-			bitrate: Int): Bool return _ve_initGpu(outputPath, width, height, fps, bitrate) == 0;
+			bitrate: Int, keyframeInterval: Int = DEFAULT_KEYFRAME_INTERVAL): Bool return _ve_initGpu(outputPath, width, height, fps, bitrate, keyframeInterval) == 0;
 
 	/** Get IOSurface ID for binding as GL texture. 0 means no surface. Use != 0 to check validity (not > 0). */
 	public static inline function getSurfaceId(): Int return _ve_getSurfaceId();

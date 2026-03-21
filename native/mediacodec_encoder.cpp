@@ -45,6 +45,44 @@ static const int COLOR_FORMAT_NV12 = 21;	  // COLOR_FormatYUV420SemiPlanar
 static const char* const MIME_H264 = "video/avc";
 static const int COLOR_FORMAT_SURFACE = 0x7F000789;
 
+// MediaCodec bitrate mode (BITRATE_MODE_VBR = 1)
+static const int BITRATE_MODE_VBR = 1;
+
+// H.264 profile constants (MediaCodecInfo.CodecProfileLevel)
+static const int AVC_PROFILE_HIGH = 8;
+static const int AVC_PROFILE_MAIN = 2;
+static const int AVC_PROFILE_BASELINE = 1;
+
+/**
+ * Try to configure encoder with best available H.264 profile (High → Main → Baseline).
+ * Some encoders silently fall back to a lower profile, which is fine.
+ * Returns AMEDIA_OK on success.
+ */
+static media_status_t
+configureWithBestProfile(AMediaCodec* codec, int width, int height, int fps, int bitrate, int keyframeInterval, int colorFormat) {
+	static const int profiles[] = {AVC_PROFILE_HIGH, AVC_PROFILE_MAIN, AVC_PROFILE_BASELINE};
+	static const int PROFILE_COUNT = (int)(sizeof(profiles) / sizeof(profiles[0]));
+
+	for (int i = 0; i < PROFILE_COUNT; i++) {
+		AMediaFormat* format = AMediaFormat_new();
+		AMediaFormat_setString(format, AMEDIAFORMAT_KEY_MIME, MIME_H264);
+		AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_WIDTH, width);
+		AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_HEIGHT, height);
+		AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_BIT_RATE, bitrate);
+		AMediaFormat_setFloat(format, AMEDIAFORMAT_KEY_FRAME_RATE, static_cast<float>(fps));
+		AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_I_FRAME_INTERVAL, keyframeInterval);
+		AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_COLOR_FORMAT, colorFormat);
+		AMediaFormat_setInt32(format, "bitrate-mode", BITRATE_MODE_VBR);
+		AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_PROFILE, profiles[i]);
+
+		media_status_t status = AMediaCodec_configure(codec, format, NULL, NULL, AMEDIACODEC_CONFIGURE_FLAG_ENCODE);
+		AMediaFormat_delete(format);
+
+		if (status == AMEDIA_OK) return AMEDIA_OK;
+	}
+	return AMEDIA_ERROR_UNSUPPORTED;
+}
+
 // BT.601 color conversion coefficients
 static const int COEFF_R_Y = 66;
 static const int COEFF_G_Y = 129;
@@ -407,10 +445,10 @@ static void releaseResources(void);
 
 extern "C" {
 
-int videoEncoderInit(const char* outputPath, int width, int height, int fps, int bitrate) {
+int videoEncoderInit(const char* outputPath, int width, int height, int fps, int bitrate, int keyframeInterval) {
 	clearError();
 
-	if (width <= 0 || height <= 0 || fps <= 0 || bitrate <= 0) {
+	if (width <= 0 || height <= 0 || fps <= 0 || bitrate <= 0 || keyframeInterval <= 0) {
 		setError("Invalid encoder parameters");
 		return -1;
 	}
@@ -438,18 +476,8 @@ int videoEncoderInit(const char* outputPath, int width, int height, int fps, int
 		return -1;
 	}
 
-	// Configure encoder
-	AMediaFormat* format = AMediaFormat_new();
-	AMediaFormat_setString(format, AMEDIAFORMAT_KEY_MIME, MIME_H264);
-	AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_WIDTH, width);
-	AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_HEIGHT, height);
-	AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_BIT_RATE, bitrate);
-	AMediaFormat_setFloat(format, AMEDIAFORMAT_KEY_FRAME_RATE, (float)fps);
-	AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_I_FRAME_INTERVAL, 1);
-	AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_COLOR_FORMAT, COLOR_FORMAT_NV12);
-
-	media_status_t status = AMediaCodec_configure(codec_, format, NULL, NULL, AMEDIACODEC_CONFIGURE_FLAG_ENCODE);
-	AMediaFormat_delete(format);
+	// Configure encoder with best available profile (High → Main → Baseline)
+	media_status_t status = configureWithBestProfile(codec_, width, height, fps, bitrate, keyframeInterval, COLOR_FORMAT_NV12);
 	if (status != AMEDIA_OK) {
 		setError("AMediaCodec_configure failed: %d", (int)status);
 		releaseResources();
@@ -598,10 +626,10 @@ int videoEncoderSupportsGpuInput(void) {
 	return (void*)AMediaCodec_createInputSurface != NULL && (void*)AMediaCodec_signalEndOfInputStream != NULL;
 }
 
-int videoEncoderInitGpu(const char* outputPath, int width, int height, int fps, int bitrate) {
+int videoEncoderInitGpu(const char* outputPath, int width, int height, int fps, int bitrate, int keyframeInterval) {
 	clearError();
 
-	if (width <= 0 || height <= 0 || fps <= 0 || bitrate <= 0) {
+	if (width <= 0 || height <= 0 || fps <= 0 || bitrate <= 0 || keyframeInterval <= 0) {
 		setError("Invalid encoder parameters");
 		return -1;
 	}
@@ -629,18 +657,8 @@ int videoEncoderInitGpu(const char* outputPath, int width, int height, int fps, 
 		return -1;
 	}
 
-	// Configure encoder with surface input (no color conversion needed)
-	AMediaFormat* format = AMediaFormat_new();
-	AMediaFormat_setString(format, AMEDIAFORMAT_KEY_MIME, MIME_H264);
-	AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_WIDTH, width);
-	AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_HEIGHT, height);
-	AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_BIT_RATE, bitrate);
-	AMediaFormat_setFloat(format, AMEDIAFORMAT_KEY_FRAME_RATE, (float)fps);
-	AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_I_FRAME_INTERVAL, 1);
-	AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_COLOR_FORMAT, COLOR_FORMAT_SURFACE);
-
-	media_status_t status = AMediaCodec_configure(codec_, format, NULL, NULL, AMEDIACODEC_CONFIGURE_FLAG_ENCODE);
-	AMediaFormat_delete(format);
+	// Configure encoder with best available profile (High → Main → Baseline)
+	media_status_t status = configureWithBestProfile(codec_, width, height, fps, bitrate, keyframeInterval, COLOR_FORMAT_SURFACE);
 	if (status != AMEDIA_OK) {
 		setError("AMediaCodec_configure failed: %d", (int)status);
 		releaseResources();
@@ -780,7 +798,8 @@ void videoEncoderBlitToIoSurface(unsigned int srcFbo, int width, int height) {
 
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, srcFbo);
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-	glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+	// Flip Y: OpenGL FBO origin is bottom-left, but EGL surface/MediaCodec expects top-left
+	glBlitFramebuffer(0, 0, width, height, 0, height, width, 0, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 	glFlush();
 
 	// Fence to ensure blit completes before submitGpuFrame swaps

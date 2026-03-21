@@ -293,10 +293,10 @@ static void bgraToI420(const unsigned char* bgra, int width, int height, unsigne
 // Public API
 // ---------------------------------------------------------------------------
 
-int videoEncoderInit(const char* outputPath, int width, int height, int fps, int bitrate) {
+int videoEncoderInit(const char* outputPath, int width, int height, int fps, int bitrate, int keyframeInterval) {
 	clearError();
 
-	if (width <= 0 || height <= 0 || fps <= 0 || bitrate <= 0) {
+	if (width <= 0 || height <= 0 || fps <= 0 || bitrate <= 0 || keyframeInterval <= 0) {
 		setError("Invalid encoder parameters");
 		return -1;
 	}
@@ -338,6 +338,12 @@ int videoEncoderInit(const char* outputPath, int width, int height, int fps, int
 		output_file_ = NULL;
 		return -1;
 	}
+
+	// Set keyframe interval (in frames) and High profile
+	int intraPeriod = keyframeInterval * fps;
+	(*encoder_)->SetOption(encoder_, ENCODER_OPTION_IDR_INTERVAL, &intraPeriod);
+	int profile = PRO_HIGH;
+	(*encoder_)->SetOption(encoder_, ENCODER_OPTION_PROFILE, &profile);
 
 	// Initialize MP4 muxer
 	mux_ = MP4E_open(0, 0, output_file_, mp4WriteCallback);
@@ -516,12 +522,13 @@ int videoEncoderSupportsGpuInput(void) {
 	return 0;
 }
 
-int videoEncoderInitGpu(const char* outputPath, int width, int height, int fps, int bitrate) {
+int videoEncoderInitGpu(const char* outputPath, int width, int height, int fps, int bitrate, int keyframeInterval) {
 	(void)outputPath;
 	(void)width;
 	(void)height;
 	(void)fps;
 	(void)bitrate;
+	(void)keyframeInterval;
 	setError("GPU input not supported on Linux");
 	return -1;
 }

@@ -72,7 +72,7 @@ static void safeRelease(T** ppT) {
 // Create an IMFMediaType for the H.264 output stream
 // ---------------------------------------------------------------------------
 
-static HRESULT createOutputType(int width, int height, int fps, int bitrate, IMFMediaType** ppType) {
+static HRESULT createOutputType(int width, int height, int fps, int bitrate, int keyframeInterval, IMFMediaType** ppType) {
 	IMFMediaType* pType = NULL;
 	HRESULT hr = MFCreateMediaType(&pType);
 	if (FAILED(hr)) return hr;
@@ -89,6 +89,7 @@ static HRESULT createOutputType(int width, int height, int fps, int bitrate, IMF
 		return hr;
 	}
 
+	// MF_MT_AVG_BITRATE = VBR (average, not constant). MF SinkWriter uses VBR by default.
 	hr = pType->SetUINT32(MF_MT_AVG_BITRATE, (UINT32)bitrate);
 	if (FAILED(hr)) {
 		pType->Release();
@@ -122,6 +123,13 @@ static HRESULT createOutputType(int width, int height, int fps, int bitrate, IMF
 	// High profile — matches AVVideoProfileLevelH264HighAutoLevel on macOS.
 	// Better compression: CABAC, 8x8 transform, custom quant matrices.
 	hr = pType->SetUINT32(MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_High);
+	if (FAILED(hr)) {
+		pType->Release();
+		return hr;
+	}
+
+	// Keyframe interval in frames (seconds * fps)
+	hr = pType->SetUINT32(MF_MT_MAX_KEYFRAME_SPACING, (UINT32)(keyframeInterval * fps));
 	if (FAILED(hr)) {
 		pType->Release();
 		return hr;
@@ -243,10 +251,10 @@ static void releaseResources(void) {
 	}
 }
 
-int videoEncoderInit(const char* outputPath, int width, int height, int fps, int bitrate) {
+int videoEncoderInit(const char* outputPath, int width, int height, int fps, int bitrate, int keyframeInterval) {
 	clearError();
 
-	if (width <= 0 || height <= 0 || fps <= 0 || bitrate <= 0) {
+	if (width <= 0 || height <= 0 || fps <= 0 || bitrate <= 0 || keyframeInterval <= 0) {
 		setError("Invalid encoder parameters");
 		return -1;
 	}
@@ -302,7 +310,7 @@ int videoEncoderInit(const char* outputPath, int width, int height, int fps, int
 
 	// Add H.264 output stream
 	IMFMediaType* pOutputType = NULL;
-	hr = createOutputType(width, height, fps, bitrate, &pOutputType);
+	hr = createOutputType(width, height, fps, bitrate, keyframeInterval, &pOutputType);
 	if (FAILED(hr)) {
 		setErrorHR("Create output media type", hr);
 		releaseResources();
@@ -431,7 +439,7 @@ int videoEncoderSupportsGpuInput(void) {
 	return 0;
 }
 
-int videoEncoderInitGpu(const char*, int, int, int, int) {
+int videoEncoderInitGpu(const char*, int, int, int, int, int) {
 	setError("GPU input not supported on Windows");
 	return -1;
 }

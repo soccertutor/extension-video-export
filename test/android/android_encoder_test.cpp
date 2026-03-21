@@ -17,13 +17,13 @@
 // ---------------------------------------------------------------------------
 
 extern "C" {
-int videoEncoderInit(const char* outputPath, int width, int height, int fps, int bitrate);
+int videoEncoderInit(const char* outputPath, int width, int height, int fps, int bitrate, int keyframeInterval);
 int videoEncoderAddFrame(const unsigned char* bgraPixels, int dataLength);
 int videoEncoderFinish(void);
 void videoEncoderDispose(void);
 const char* videoEncoderGetError(void);
 int videoEncoderSupportsGpuInput(void);
-int videoEncoderInitGpu(const char* outputPath, int width, int height, int fps, int bitrate);
+int videoEncoderInitGpu(const char* outputPath, int width, int height, int fps, int bitrate, int keyframeInterval);
 unsigned int videoEncoderGetSurfaceId(void);
 int videoEncoderSubmitGpuFrame(void);
 int videoEncoderSetupIoSurfaceFbo(int width, int height);
@@ -41,6 +41,7 @@ static const int WIDTH_UNALIGNED = 62;
 static const int HEIGHT_UNALIGNED = 62;
 static const int FPS = 30;
 static const int BITRATE = 500000;
+static const int KEYFRAME_INTERVAL = 2;
 static const int FRAME_COUNT = 30;
 static const int MIN_FILE_SIZE = 100;
 static const int BYTES_PER_PIXEL = 4;
@@ -115,7 +116,7 @@ static int testCpuAligned() {
 
 	fillTestPattern(pixels, dataLen);
 
-	const int rc_init = videoEncoderInit(path, WIDTH_ALIGNED, HEIGHT_ALIGNED, FPS, BITRATE);
+	const int rc_init = videoEncoderInit(path, WIDTH_ALIGNED, HEIGHT_ALIGNED, FPS, BITRATE, KEYFRAME_INTERVAL);
 	ASSERT(rc_init == 0, "init failed");
 
 	for (int i = 0; i < FRAME_COUNT; i++) {
@@ -148,7 +149,7 @@ static int testCpuUnaligned() {
 
 	fillTestPattern(pixels, dataLen);
 
-	const int rc_init = videoEncoderInit(path, WIDTH_UNALIGNED, HEIGHT_UNALIGNED, FPS, BITRATE);
+	const int rc_init = videoEncoderInit(path, WIDTH_UNALIGNED, HEIGHT_UNALIGNED, FPS, BITRATE, KEYFRAME_INTERVAL);
 	ASSERT(rc_init == 0, "init failed");
 
 	for (int i = 0; i < FRAME_COUNT; i++) {
@@ -284,7 +285,7 @@ static int testGpuEncode() {
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
 	// 3. GPU encode
-	if (videoEncoderInitGpu(path, WIDTH_ALIGNED, HEIGHT_ALIGNED, FPS, BITRATE) != 0) {
+	if (videoEncoderInitGpu(path, WIDTH_ALIGNED, HEIGHT_ALIGNED, FPS, BITRATE, KEYFRAME_INTERVAL) != 0) {
 		printf("  GPU test SKIPPED (MediaCodec surface input not available on this emulator)\n");
 		goto cleanup;
 	}
@@ -341,7 +342,7 @@ cleanup:
 
 static int testErrorHandling() {
 	// Init with invalid params (zero dimensions)
-	int rc = videoEncoderInit("/data/local/tmp/err.mp4", 0, 0, 0, 0);
+	int rc = videoEncoderInit("/data/local/tmp/err.mp4", 0, 0, 0, 0, 0);
 	ASSERT(rc == -1, "init with invalid params should fail");
 	ASSERT(videoEncoderGetError() != nullptr, "error should be set after invalid init");
 	videoEncoderDispose();

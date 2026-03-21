@@ -43,22 +43,15 @@
 	<set name="SLIBEXT" value=".a" unless="windows" />
 	<set name="SLIBEXT" value=".so" if="webos" />
 
-	<set name="DEBUGEXTRA" value="-debug" if="fulldebug" />
-
-	<set name="IOS_SUFFIX" value="" />
-	<set name="IOS_SUFFIX" value=".iphoneos" if="iphoneos" />
-	<set name="IOS_SUFFIX" value=".iphoneos-64" if="iphoneos HXCPP_ARM64" />
-	<set name="IOS_SUFFIX" value=".iphonesim" if="iphonesim" />
-	<set name="IOS_SUFFIX" value=".iphonesim-64" if="iphonesim HXCPP_ARM64" />
-
 	<target
     id="NDLL"
-    output="${LIBPREFIX}extension_video_export${DEBUGEXTRA}${IOS_SUFFIX}"
+    output="${LIBPREFIX}extension_video_export${LIBEXTRA}"
     tool="linker"
     toolid="${STD_MODULE_LINK}"
   >
 		<outdir name="../ndll/${BINDIR}" />
 		<ext value=".ndll" if="windows || macos || linux" />
+		<ext value=".so" if="android" />
 		<files id="common" />
 
 		<section if="macos || iphoneos || iphonesim">
