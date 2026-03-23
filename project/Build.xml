@@ -43,15 +43,21 @@
 	<set name="SLIBEXT" value=".a" unless="windows" />
 	<set name="SLIBEXT" value=".so" if="webos" />
 
+	<!-- Android: LIBEXTRA adds arch suffix (-64, -v7, etc.) needed because all archs share one dir.
+	     Desktop/iOS: arch is in BINDIR (MacArm64, Windows64, etc.), no suffix needed. -->
+	<set name="VE_SUFFIX" value="" />
+	<set name="VE_SUFFIX" value="${LIBEXTRA}" if="android" />
+
 	<target
     id="NDLL"
-    output="${LIBPREFIX}extension_video_export"
+    output="${LIBPREFIX}extension_video_export${VE_SUFFIX}"
     tool="linker"
     toolid="${STD_MODULE_LINK}"
   >
 		<outdir name="../ndll/${BINDIR}" />
 		<ext value=".ndll" if="windows || macos || linux" />
 		<ext value=".so" if="android" />
+		<ext value="${LIBEXTRA}.a" if="iphoneos || iphonesim" />
 		<files id="common" />
 
 		<section if="macos || iphoneos || iphonesim">
