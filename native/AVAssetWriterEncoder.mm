@@ -202,7 +202,7 @@ static int initAssetWriter(const char *outputPath, int width, int height, int fp
 	};
 
 	writer_input_ = [[AVAssetWriterInput alloc] initWithMediaType:AVMediaTypeVideo outputSettings:videoSettings];
-	writer_input_.expectsMediaDataInRealTime = NO;
+	writer_input_.expectsMediaDataInRealTime = YES;
 
 	// Pixel buffer adaptor — BGRA matches OpenFL native BitmapData
 	NSDictionary *bufferAttributes = @{
