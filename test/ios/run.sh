@@ -13,7 +13,14 @@ BUILD_DIR="$SCRIPT_DIR/build"
 if [ "${1:-}" != "" ]; then
 	RUNTIME="$1"
 else
-	RUNTIME=$(xcrun simctl list runtimes iOS -j | python3 -c "import sys,json; rs=json.load(sys.stdin)['runtimes']; print(rs[-1]['identifier'])")
+	RUNTIME=$(xcrun simctl list runtimes iOS -j | python3 -c "
+import sys, json, re
+runtimes = json.load(sys.stdin)['runtimes']
+ga = [r for r in runtimes if r.get('isAvailable')
+      and (m := re.search(r'(\d+)', r.get('version',''))) and int(m.group(1)) < 20]
+pick = ga[-1] if ga else runtimes[-1]
+print(pick['identifier'])
+")
 fi
 echo "Runtime: $RUNTIME"
 

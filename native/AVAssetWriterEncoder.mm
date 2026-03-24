@@ -282,6 +282,10 @@ int videoEncoderAddFrame(const unsigned char *bgraPixels, int dataLength) {
 		// (e.g. standalone CLI tests), so usleep provides the actual delay.
 		int waitRetries = 0;
 		while (!writer_input_.isReadyForMoreMediaData) {
+			if (writer_.status == AVAssetWriterStatusFailed) {
+				setError([NSString stringWithFormat:@"AVAssetWriter failed: %@", writer_.error.localizedDescription ?: @"unknown"]);
+				return -1;
+			}
 			CFRunLoopRunInMode(kCFRunLoopDefaultMode, READY_WAIT_INTERVAL, true);
 			usleep(ASYNC_POLL_INTERVAL_US);
 			if (++waitRetries > READY_WAIT_MAX_RETRIES) {
@@ -558,6 +562,12 @@ int videoEncoderSubmitGpuFrame(void) {
 			@autoreleasepool {
 				int waitRetries = 0;
 				while (!writer_input_.isReadyForMoreMediaData) {
+					if (writer_.status == AVAssetWriterStatusFailed) {
+						setError([NSString stringWithFormat:@"AVAssetWriter failed: %@", writer_.error.localizedDescription ?: @"unknown"]);
+						async_error_ = true;
+						dispatch_semaphore_signal(buffer_sema_[bufIdx]);
+						return;
+					}
 					usleep(ASYNC_POLL_INTERVAL_US);
 					if (++waitRetries > ASYNC_READY_WAIT_MAX) {
 						setError(@"Async timed out waiting for writer input");

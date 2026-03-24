@@ -207,7 +207,15 @@ jobs:
 
       - name: Run tests on iOS Simulator
         run: |
-          RUNTIME=$(xcrun simctl list runtimes iOS -j | python3 -c "import sys,json; rs=json.load(sys.stdin)['runtimes']; print(rs[-1]['identifier'])")
+          RUNTIME=$(xcrun simctl list runtimes iOS -j | python3 -c "
+          import sys, json, re
+          runtimes = json.load(sys.stdin)['runtimes']
+          # Pick latest GA runtime (iOS 18.x); skip iOS 26+ (pre-release unified versioning)
+          ga = [r for r in runtimes if r.get('isAvailable')
+                and (m := re.search(r'(\d+)', r.get('version',''))) and int(m.group(1)) < 20]
+          pick = ga[-1] if ga else runtimes[-1]
+          print(pick['identifier'])
+          ")
           echo "Using runtime: $RUNTIME"
           UDID=$(xcrun simctl create TestEncoder "iPhone 16" "$RUNTIME")
           xcrun simctl boot "$UDID"
