@@ -54,8 +54,26 @@ static const int AVC_PROFILE_MAIN = 2;
 static const int AVC_PROFILE_BASELINE = 1;
 
 /**
- * Try to configure encoder with best available H.264 profile (High → Main → Baseline).
- * Some encoders silently fall back to a lower profile, which is fine.
+ * Create a base AMediaFormat for H.264 encoding (shared by all configure attempts).
+ */
+static AMediaFormat* createBaseFormat(int width, int height, int fps, int bitrate, int keyframeInterval, int colorFormat) {
+	AMediaFormat* format = AMediaFormat_new();
+	AMediaFormat_setString(format, AMEDIAFORMAT_KEY_MIME, MIME_H264);
+	AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_WIDTH, width);
+	AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_HEIGHT, height);
+	AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_BIT_RATE, bitrate);
+	AMediaFormat_setFloat(format, AMEDIAFORMAT_KEY_FRAME_RATE, static_cast<float>(fps));
+	AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_I_FRAME_INTERVAL, keyframeInterval);
+	AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_COLOR_FORMAT, colorFormat);
+	AMediaFormat_setInt32(format, "bitrate-mode", BITRATE_MODE_VBR);
+	return format;
+}
+
+/**
+ * Try to configure encoder with best available H.264 profile (High → Main → Baseline),
+ * then fall back to no explicit profile for emulators that reject all profile hints.
+ * Uses string literal "profile" instead of AMEDIAFORMAT_KEY_PROFILE (API 28+ weak symbol)
+ * to avoid NULL-deref crash on API < 28.
  * Returns AMEDIA_OK on success.
  */
 static media_status_t
@@ -63,24 +81,23 @@ configureWithBestProfile(AMediaCodec* codec, int width, int height, int fps, int
 	static const int profiles[] = {AVC_PROFILE_HIGH, AVC_PROFILE_MAIN, AVC_PROFILE_BASELINE};
 	static const int PROFILE_COUNT = (int)(sizeof(profiles) / sizeof(profiles[0]));
 
+	// Try each profile (High → Main → Baseline)
 	for (int i = 0; i < PROFILE_COUNT; i++) {
-		AMediaFormat* format = AMediaFormat_new();
-		AMediaFormat_setString(format, AMEDIAFORMAT_KEY_MIME, MIME_H264);
-		AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_WIDTH, width);
-		AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_HEIGHT, height);
-		AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_BIT_RATE, bitrate);
-		AMediaFormat_setFloat(format, AMEDIAFORMAT_KEY_FRAME_RATE, static_cast<float>(fps));
-		AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_I_FRAME_INTERVAL, keyframeInterval);
-		AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_COLOR_FORMAT, colorFormat);
-		AMediaFormat_setInt32(format, "bitrate-mode", BITRATE_MODE_VBR);
-		AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_PROFILE, profiles[i]);
+		AMediaFormat* format = createBaseFormat(width, height, fps, bitrate, keyframeInterval, colorFormat);
+		AMediaFormat_setInt32(format, "profile", profiles[i]);
 
 		media_status_t status = AMediaCodec_configure(codec, format, NULL, NULL, AMEDIACODEC_CONFIGURE_FLAG_ENCODE);
 		AMediaFormat_delete(format);
 
 		if (status == AMEDIA_OK) return AMEDIA_OK;
 	}
-	return AMEDIA_ERROR_UNSUPPORTED;
+
+	// Fallback: configure without explicit profile (lets codec pick its default)
+	AMediaFormat* format = createBaseFormat(width, height, fps, bitrate, keyframeInterval, colorFormat);
+	media_status_t status = AMediaCodec_configure(codec, format, NULL, NULL, AMEDIACODEC_CONFIGURE_FLAG_ENCODE);
+	AMediaFormat_delete(format);
+
+	return status;
 }
 
 // BT.601 color conversion coefficients
