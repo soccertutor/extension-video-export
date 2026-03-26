@@ -39,10 +39,6 @@
 		<compilerflag value="-fdata-sections" unless="debug || fulldebug" />
 	</files>
 
-	<set name="SLIBEXT" value=".lib" if="windows" />
-	<set name="SLIBEXT" value=".a" unless="windows" />
-	<set name="SLIBEXT" value=".so" if="webos" />
-
 	<!-- Android: LIBEXTRA adds arch suffix (-64, -v7, etc.) needed because all archs share one dir.
 	     Desktop/iOS: arch is in BINDIR (MacArm64, Windows64, etc.), no suffix needed. -->
 	<set name="VE_SUFFIX" value="" />
@@ -62,14 +58,15 @@
 
 		<section if="macos || iphoneos || iphonesim">
 			<files id="apple" />
-			<vflag name="-framework" value="AVFoundation" />
-			<vflag name="-framework" value="CoreMedia" />
-			<vflag name="-framework" value="CoreVideo" />
-			<vflag name="-framework" value="IOSurface" />
-			<vflag name="-framework" value="Metal" />
-			<vflag name="-framework" value="OpenGL" if="macos" />
-			<vflag name="-framework" value="OpenGLES" if="iphoneos || iphonesim" />
-			<lib name="-Wl,-dead_strip" if="macos" unless="debug || fulldebug" />
+			<section if="macos">
+				<vflag name="-framework" value="AVFoundation" />
+				<vflag name="-framework" value="CoreMedia" />
+				<vflag name="-framework" value="CoreVideo" />
+				<vflag name="-framework" value="IOSurface" />
+				<vflag name="-framework" value="Metal" />
+				<vflag name="-framework" value="OpenGL" />
+				<lib name="-Wl,-dead_strip" unless="debug || fulldebug" />
+			</section>
 			<section unless="MACOSX_DEPLOYMENT_TARGET">
 				<setenv name="MACOSX_DEPLOYMENT_TARGET" value="10.13" unless="HXCPP_ARM64" />
 				<setenv name="MACOSX_DEPLOYMENT_TARGET" value="11.7" if="HXCPP_ARM64" />

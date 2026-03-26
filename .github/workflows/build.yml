@@ -6,6 +6,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+env:
+  HAXE_VERSION: "4.3.4"
+
 jobs:
   detect-release:
     runs-on: ubuntu-latest
@@ -74,9 +77,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: krdlab/setup-haxe@v2
-        with:
-          haxe-version: 4.3.4
+      - uses: krdlab/setup-haxe@v2        with:
+          haxe-version: ${{ env.HAXE_VERSION }}
 
       - name: Cache haxelib
         uses: actions/cache@v4
@@ -99,8 +101,7 @@ jobs:
       - name: Setup Android NDK
         id: setup-ndk
         if: matrix.target == 'android'
-        uses: nttld/setup-ndk@v1
-        with:
+        uses: nttld/setup-ndk@v1        with:
           ndk-version: r26c
 
       - name: Setup JDK (Android)
@@ -114,6 +115,8 @@ jobs:
         if: matrix.target == 'android'
         run: |
           curl -sL -o /tmp/hxcpp.zip https://github.com/HaxeFoundation/hxcpp/releases/download/v4.3.45/hxcpp-4.3.45.zip
+          # TODO: add sha256sum verification once hash is recorded
+          # echo "<expected_hash>  /tmp/hxcpp.zip" | sha256sum -c
           haxelib install /tmp/hxcpp.zip --quiet
 
       - name: Configure Lime for Android
@@ -143,6 +146,7 @@ jobs:
           path: ndll/${{ matrix.ndll_dir }}/
           retention-days: 5
 
+  # TODO: add GPU tests for macOS and Windows (requires GPU-capable CI runners)
   test-android:
     needs: build
     runs-on: ubuntu-latest
@@ -158,8 +162,7 @@ jobs:
 
       - name: Setup Android NDK
         id: setup-ndk
-        uses: nttld/setup-ndk@v1
-        with:
+        uses: nttld/setup-ndk@v1        with:
           ndk-version: r26c
 
       - name: Build native test with CMake
@@ -178,8 +181,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Run tests on emulator
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
+        uses: reactivecircus/android-emulator-runner@v2        with:
           api-level: ${{ matrix.api-level }}
           arch: x86_64
           emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -no-audio -no-boot-anim
@@ -236,9 +238,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: krdlab/setup-haxe@v2
-        with:
-          haxe-version: 4.3.4
+      - uses: krdlab/setup-haxe@v2        with:
+          haxe-version: ${{ env.HAXE_VERSION }}
 
       - name: Download all NDLL artifacts
         uses: actions/download-artifact@v4

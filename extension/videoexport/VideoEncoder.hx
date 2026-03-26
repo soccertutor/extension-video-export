@@ -18,7 +18,7 @@ import haxe.io.BytesData;
  */
 @:nullSafety(Strict) final class VideoEncoder {
 
-	private static inline final DEFAULT_KEYFRAME_INTERVAL:Int = 2;
+	private static inline final DEFAULT_KEYFRAME_INTERVAL: Int = 2;
 
 	private static final _ve_init: Callable<ConstCharStar -> Int -> Int -> Int -> Int -> Int -> Int> = Prime.load('extension_video_export',
 		've_init', 'ciiiiii', false);
@@ -34,23 +34,26 @@ import haxe.io.BytesData;
 	private static final _ve_supportsGpuInput: Callable<Void -> Int> = Prime.load('extension_video_export', 've_supportsGpuInput', 'i',
 		false);
 
-	private static final _ve_initGpu: Callable<ConstCharStar -> Int -> Int -> Int -> Int -> Int -> Int> = Prime.load('extension_video_export',
-		've_initGpu', 'ciiiiii', false);
+	private static final _ve_initGpu: Callable<ConstCharStar -> Int -> Int -> Int -> Int -> Int ->
+		Int> = Prime.load('extension_video_export', 've_initGpu', 'ciiiiii', false);
 
 	private static final _ve_getSurfaceId: Callable<Void -> Int> = Prime.load('extension_video_export', 've_getSurfaceId', 'i', false);
 
 	private static final _ve_submitGpuFrame: Callable<Void -> Int> = Prime.load('extension_video_export', 've_submitGpuFrame', 'i', false);
 
-	private static final _ve_setupGpuFbo: Callable<Int -> Int -> Int> = Prime.load('extension_video_export', 've_setupGpuFbo', 'iii', false);
+	private static final _ve_setupGpuFbo: Callable<Int -> Int -> Int> = Prime.load('extension_video_export', 've_setupGpuFbo', 'iii',
+		false);
 
-	private static final _ve_blitGpuFrame: Callable<Int -> Int -> Int -> cpp.Void> = Prime.load('extension_video_export', 've_blitGpuFrame',
-		'iiiv', false);
+	private static final _ve_blitGpuFrame: Callable<Int -> Int -> Int -> cpp.Void> = Prime.load('extension_video_export',
+		've_blitGpuFrame', 'iiiv', false);
 
 	private static final _ve_disposeGpuFbo: Callable<Void -> cpp.Void> = Prime.load('extension_video_export', 've_disposeGpuFbo', 'v',
 		false);
 
-	public static inline function init(outputPath: String, width: Int, height: Int, fps: Int,
-			bitrate: Int, keyframeInterval: Int = DEFAULT_KEYFRAME_INTERVAL): Bool return _ve_init(outputPath, width, height, fps, bitrate, keyframeInterval) == 0;
+	/** Initialize encoder in CPU mode. Returns true on success. */
+	public static inline function init(outputPath: String, width: Int, height: Int, fps: Int, bitrate: Int,
+			keyframeInterval: Int = DEFAULT_KEYFRAME_INTERVAL): Bool return _ve_init(outputPath, width, height, fps, bitrate,
+			keyframeInterval) == 0;
 
 	/**
 	 * Add a BGRA frame via CPU path. Expects top-down pixel data (first byte = top-left).
@@ -61,18 +64,22 @@ import haxe.io.BytesData;
 	 */
 	public static inline function addFrame(bgraPixels: BytesData, dataLength: Int): Bool return _ve_addFrame(bgraPixels, dataLength) == 0;
 
+	/** Finalize encoding and close the output file. */
 	public static inline function finish(): Bool return _ve_finish() == 0;
 
+	/** Release all encoder resources. Safe to call even if init failed. */
 	public static inline function dispose(): Void _ve_dispose();
 
+	/** Return the last error message, or null if no error. */
 	public static inline function getError(): Null<String> return _ve_getError();
 
 	/** Whether the platform supports zero-copy GPU texture input. */
 	public static inline function supportsGpuInput(): Bool return _ve_supportsGpuInput() != 0;
 
 	/** Initialize encoder in GPU mode. */
-	public static inline function initGpu(outputPath: String, width: Int, height: Int, fps: Int,
-			bitrate: Int, keyframeInterval: Int = DEFAULT_KEYFRAME_INTERVAL): Bool return _ve_initGpu(outputPath, width, height, fps, bitrate, keyframeInterval) == 0;
+	public static inline function initGpu(outputPath: String, width: Int, height: Int, fps: Int, bitrate: Int,
+			keyframeInterval: Int = DEFAULT_KEYFRAME_INTERVAL): Bool return _ve_initGpu(outputPath, width, height, fps, bitrate,
+			keyframeInterval) == 0;
 
 	/** Get platform surface ID for binding as GL texture. 0 means no surface. Use != 0 to check validity (not > 0). */
 	public static inline function getSurfaceId(): Int return _ve_getSurfaceId();

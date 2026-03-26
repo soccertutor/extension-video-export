@@ -8,12 +8,12 @@ Encode `BitmapData` frames into an MP4 file using native platform APIs — no ex
 
 ## Platform backends
 
-| Platform    | Backend                          | Notes                                          |
-| ----------- | -------------------------------- | ---------------------------------------------- |
-| macOS / iOS | AVFoundation (AVAssetWriter)     | BGRA direct, GPU path (IOSurface + Metal copy) |
+| Platform    | Backend                          | Notes                                            |
+| ----------- | -------------------------------- | ------------------------------------------------ |
+| macOS / iOS | AVFoundation (AVAssetWriter)     | BGRA direct, GPU path (IOSurface + Metal copy)   |
 | Windows     | Media Foundation (IMFSinkWriter) | BGRA direct, GPU path (D3D11 interop / fallback) |
-| Android     | NDK AMediaCodec + AMediaMuxer    | BGRA to NV12, GPU path (EGL surface input)     |
-| Linux       | OpenH264 + minimp4               | BGRA to I420                                   |
+| Android     | NDK AMediaCodec + AMediaMuxer    | BGRA to NV12, GPU path (EGL surface input)       |
+| Linux       | OpenH264 + minimp4               | BGRA to I420                                     |
 
 ## Minimum platform versions
 
@@ -58,13 +58,13 @@ VideoEncoder.dispose();
 
 ### API
 
-| Method     | Signature                             | Returns                             |
-| ---------- | ------------------------------------- | ----------------------------------- |
+| Method     | Signature                                                 | Returns                             |
+| ---------- | --------------------------------------------------------- | ----------------------------------- |
 | `init`     | `(path, width, height, fps, bitrate, keyframeInterval=2)` | `Bool` — true on success            |
-| `addFrame` | `(bgraPixels, dataLength)`            | `Bool` — true on success            |
-| `finish`   | `()`                                  | `Bool` — true on success            |
-| `dispose`  | `()`                                  | `Void`                              |
-| `getError` | `()`                                  | `Null<String>` — last error message |
+| `addFrame` | `(bgraPixels, dataLength)`                                | `Bool` — true on success            |
+| `finish`   | `()`                                                      | `Bool` — true on success            |
+| `dispose`  | `()`                                                      | `Void`                              |
+| `getError` | `()`                                                      | `Null<String>` — last error message |
 
 All input must be **BGRA** pixel data. Single-instance, not thread-safe — call everything from the same thread.
 
@@ -103,15 +103,15 @@ if (VideoEncoder.supportsGpuInput()) {
 }
 ```
 
-| Method                | Signature                             | Returns                             |
-| --------------------- | ------------------------------------- | ----------------------------------- |
-| `supportsGpuInput`    | `()`                                  | `Bool` — true if GPU path available |
-| `initGpu`             | `(path, width, height, fps, bitrate, keyframeInterval=2)` | `Bool` — true on success            |
-| `getSurfaceId`        | `()`                                  | `Int` — surface ID (0 = none)       |
-| `submitGpuFrame`      | `()`                                  | `Bool` — true on success            |
-| `setupGpuFbo`         | `(width, height)`                     | `Bool` — true on success            |
-| `blitGpuFrame`        | `(srcFboId, width, height)`           | `Void`                              |
-| `disposeGpuFbo`       | `()`                                  | `Void`                              |
+| Method             | Signature                                                 | Returns                             |
+| ------------------ | --------------------------------------------------------- | ----------------------------------- |
+| `supportsGpuInput` | `()`                                                      | `Bool` — true if GPU path available |
+| `initGpu`          | `(path, width, height, fps, bitrate, keyframeInterval=2)` | `Bool` — true on success            |
+| `getSurfaceId`     | `()`                                                      | `Int` — surface ID (0 = none)       |
+| `submitGpuFrame`   | `()`                                                      | `Bool` — true on success            |
+| `setupGpuFbo`      | `(width, height)`                                         | `Bool` — true on success            |
+| `blitGpuFrame`     | `(srcFboId, width, height)`                               | `Void`                              |
+| `disposeGpuFbo`    | `()`                                                      | `Void`                              |
 
 ## Building from source
 
@@ -131,6 +131,12 @@ For clangd-based IDEs (Zed, VS Code with clangd, Neovim LSP), create a symlink s
 
 ```bash
 ln -sfn "$(haxelib path hxcpp | head -1)include" .hxcpp-include
+```
+
+For Android test navigation (EGL/GLES headers), also link the NDK sysroot:
+
+```bash
+ln -sfn "$ANDROID_HOME/ndk/$(ls "$ANDROID_HOME/ndk" | sort -V | tail -1)/toolchains/llvm/prebuilt/$(uname -s | tr A-Z a-z)-$(uname -m)/sysroot" .ndk-sysroot
 ```
 
 ### Build the NDLL

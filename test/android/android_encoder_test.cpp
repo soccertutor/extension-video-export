@@ -109,32 +109,59 @@ static void fillTestPattern(unsigned char* pixels, int dataLen) {
 // ---------------------------------------------------------------------------
 
 static int testCpuAligned() {
-	const char* path = "/data/local/tmp/test_cpu_aligned.mp4";
+	const char* const path = "/data/local/tmp/test_cpu_aligned.mp4";
 	const int dataLen = WIDTH_ALIGNED * HEIGHT_ALIGNED * BYTES_PER_PIXEL;
+	int result = -1;
+	bool encoder_init = false;
+
 	unsigned char* pixels = (unsigned char*)calloc(dataLen, 1);
-	ASSERT(pixels != nullptr, "alloc failed");
+	if (!pixels) {
+		printf("  FAIL: alloc failed\n");
+		return -1;
+	}
 
 	fillTestPattern(pixels, dataLen);
 
-	const int rc_init = videoEncoderInit(path, WIDTH_ALIGNED, HEIGHT_ALIGNED, FPS, BITRATE, KEYFRAME_INTERVAL);
-	ASSERT(rc_init == 0, "init failed");
+	if (videoEncoderInit(path, WIDTH_ALIGNED, HEIGHT_ALIGNED, FPS, BITRATE, KEYFRAME_INTERVAL) != 0) {
+		printf("  FAIL: init failed\n");
+		const char* err = videoEncoderGetError();
+		if (err) printf("  encoder error: %s\n", err);
+		goto cleanup;
+	}
+	encoder_init = true;
 
 	for (int i = 0; i < FRAME_COUNT; i++) {
-		const int rc_frame = videoEncoderAddFrame(pixels, dataLen);
-		ASSERT(rc_frame == 0, "addFrame failed");
+		if (videoEncoderAddFrame(pixels, dataLen) != 0) {
+			printf("  FAIL: addFrame failed\n");
+			const char* err = videoEncoderGetError();
+			if (err) printf("  encoder error: %s\n", err);
+			goto cleanup;
+		}
 	}
 
-	const int rc_finish = videoEncoderFinish();
-	ASSERT(rc_finish == 0, "finish failed");
+	if (videoEncoderFinish() != 0) {
+		printf("  FAIL: finish failed\n");
+		const char* err = videoEncoderGetError();
+		if (err) printf("  encoder error: %s\n", err);
+		goto cleanup;
+	}
 
-	const long size = getFileSize(path);
-	printf("  output: %ld bytes\n", size);
-	ASSERT(size >= MIN_FILE_SIZE, "output file too small");
+	{
+		const long size = getFileSize(path);
+		printf("  output: %ld bytes\n", size);
+		if (size < MIN_FILE_SIZE) {
+			printf("  FAIL: output file too small\n");
+			goto cleanup;
+		}
+	}
 
-	videoEncoderDispose();
+	result = 0;
+
+cleanup:
+	if (encoder_init) videoEncoderDispose();
 	free(pixels);
 	unlink(path);
-	return 0;
+	return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -142,32 +169,59 @@ static int testCpuAligned() {
 // ---------------------------------------------------------------------------
 
 static int testCpuUnaligned() {
-	const char* path = "/data/local/tmp/test_cpu_unaligned.mp4";
+	const char* const path = "/data/local/tmp/test_cpu_unaligned.mp4";
 	const int dataLen = WIDTH_UNALIGNED * HEIGHT_UNALIGNED * BYTES_PER_PIXEL;
+	int result = -1;
+	bool encoder_init = false;
+
 	unsigned char* pixels = (unsigned char*)calloc(dataLen, 1);
-	ASSERT(pixels != nullptr, "alloc failed");
+	if (!pixels) {
+		printf("  FAIL: alloc failed\n");
+		return -1;
+	}
 
 	fillTestPattern(pixels, dataLen);
 
-	const int rc_init = videoEncoderInit(path, WIDTH_UNALIGNED, HEIGHT_UNALIGNED, FPS, BITRATE, KEYFRAME_INTERVAL);
-	ASSERT(rc_init == 0, "init failed");
+	if (videoEncoderInit(path, WIDTH_UNALIGNED, HEIGHT_UNALIGNED, FPS, BITRATE, KEYFRAME_INTERVAL) != 0) {
+		printf("  FAIL: init failed\n");
+		const char* err = videoEncoderGetError();
+		if (err) printf("  encoder error: %s\n", err);
+		goto cleanup;
+	}
+	encoder_init = true;
 
 	for (int i = 0; i < FRAME_COUNT; i++) {
-		const int rc_frame = videoEncoderAddFrame(pixels, dataLen);
-		ASSERT(rc_frame == 0, "addFrame failed");
+		if (videoEncoderAddFrame(pixels, dataLen) != 0) {
+			printf("  FAIL: addFrame failed\n");
+			const char* err = videoEncoderGetError();
+			if (err) printf("  encoder error: %s\n", err);
+			goto cleanup;
+		}
 	}
 
-	const int rc_finish = videoEncoderFinish();
-	ASSERT(rc_finish == 0, "finish failed");
+	if (videoEncoderFinish() != 0) {
+		printf("  FAIL: finish failed\n");
+		const char* err = videoEncoderGetError();
+		if (err) printf("  encoder error: %s\n", err);
+		goto cleanup;
+	}
 
-	const long size = getFileSize(path);
-	printf("  output: %ld bytes\n", size);
-	ASSERT(size >= MIN_FILE_SIZE, "output file too small");
+	{
+		const long size = getFileSize(path);
+		printf("  output: %ld bytes\n", size);
+		if (size < MIN_FILE_SIZE) {
+			printf("  FAIL: output file too small\n");
+			goto cleanup;
+		}
+	}
 
-	videoEncoderDispose();
+	result = 0;
+
+cleanup:
+	if (encoder_init) videoEncoderDispose();
 	free(pixels);
 	unlink(path);
-	return 0;
+	return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -348,8 +402,8 @@ static int testErrorHandling() {
 	videoEncoderDispose();
 
 	// AddFrame without init
-	unsigned char dummy[4] = {0};
-	rc = videoEncoderAddFrame(dummy, 4);
+	unsigned char dummy[BYTES_PER_PIXEL] = {0};
+	rc = videoEncoderAddFrame(dummy, BYTES_PER_PIXEL);
 	ASSERT(rc == -1, "addFrame without init should fail");
 	ASSERT(videoEncoderGetError() != nullptr, "error should be set after addFrame without init");
 

@@ -107,18 +107,17 @@ static void fillTestPattern(unsigned char* pixels, int dataLen) {
 }
 
 // ---------------------------------------------------------------------------
-// Test 1: CPU path — aligned dimensions (64x64)
+// Shared CPU encode helper
 // ---------------------------------------------------------------------------
 
-static int testCpuAligned() {
-	const char* path = "/tmp/test_ios_cpu_aligned.mp4";
-	const int dataLen = WIDTH_ALIGNED * HEIGHT_ALIGNED * BYTES_PER_PIXEL;
+static int testCpuEncode(const char* const path, int width, int height) {
+	const int dataLen = width * height * BYTES_PER_PIXEL;
 	unsigned char* pixels = (unsigned char*)calloc(dataLen, 1);
 	ASSERT(pixels != nullptr, "alloc failed");
 
 	fillTestPattern(pixels, dataLen);
 
-	const int rc_init = videoEncoderInit(path, WIDTH_ALIGNED, HEIGHT_ALIGNED, FPS, BITRATE, KEYFRAME_INTERVAL);
+	const int rc_init = videoEncoderInit(path, width, height, FPS, BITRATE, KEYFRAME_INTERVAL);
 	ASSERT(rc_init == 0, "init failed");
 
 	for (int i = 0; i < FRAME_COUNT; i++) {
@@ -140,36 +139,19 @@ static int testCpuAligned() {
 }
 
 // ---------------------------------------------------------------------------
+// Test 1: CPU path — aligned dimensions (64x64)
+// ---------------------------------------------------------------------------
+
+static int testCpuAligned() {
+	return testCpuEncode("/tmp/test_ios_cpu_aligned.mp4", WIDTH_ALIGNED, HEIGHT_ALIGNED);
+}
+
+// ---------------------------------------------------------------------------
 // Test 2: CPU path — non-aligned dimensions (62x62)
 // ---------------------------------------------------------------------------
 
 static int testCpuUnaligned() {
-	const char* path = "/tmp/test_ios_cpu_unaligned.mp4";
-	const int dataLen = WIDTH_UNALIGNED * HEIGHT_UNALIGNED * BYTES_PER_PIXEL;
-	unsigned char* pixels = (unsigned char*)calloc(dataLen, 1);
-	ASSERT(pixels != nullptr, "alloc failed");
-
-	fillTestPattern(pixels, dataLen);
-
-	const int rc_init = videoEncoderInit(path, WIDTH_UNALIGNED, HEIGHT_UNALIGNED, FPS, BITRATE, KEYFRAME_INTERVAL);
-	ASSERT(rc_init == 0, "init failed");
-
-	for (int i = 0; i < FRAME_COUNT; i++) {
-		const int rc_frame = videoEncoderAddFrame(pixels, dataLen);
-		ASSERT(rc_frame == 0, "addFrame failed");
-	}
-
-	const int rc_finish = videoEncoderFinish();
-	ASSERT(rc_finish == 0, "finish failed");
-
-	const long size = getFileSize(path);
-	printf("  output: %ld bytes\n", size);
-	ASSERT(size >= MIN_FILE_SIZE, "output file too small");
-
-	videoEncoderDispose();
-	free(pixels);
-	unlink(path);
-	return 0;
+	return testCpuEncode("/tmp/test_ios_cpu_unaligned.mp4", WIDTH_UNALIGNED, HEIGHT_UNALIGNED);
 }
 
 // ---------------------------------------------------------------------------
@@ -194,7 +176,7 @@ static int testGpuEncode() {
 	}
 
 	int result = -1;
-	const char* path = "/tmp/test_ios_gpu.mp4";
+	const char* const path = "/tmp/test_ios_gpu.mp4";
 	EAGLContext* ctx = nil;
 	GLuint srcFbo = 0, srcTex = 0;
 	bool encoder_init = false;
@@ -297,8 +279,8 @@ static int testErrorHandling() {
 	videoEncoderDispose();
 
 	// AddFrame without init
-	unsigned char dummy[4] = {0};
-	rc = videoEncoderAddFrame(dummy, 4);
+	unsigned char dummy[BYTES_PER_PIXEL] = {0};
+	rc = videoEncoderAddFrame(dummy, BYTES_PER_PIXEL);
 	ASSERT(rc == -1, "addFrame without init should fail");
 	ASSERT(videoEncoderGetError() != nullptr, "error should be set after addFrame without init");
 

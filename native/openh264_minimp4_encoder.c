@@ -41,6 +41,8 @@ static const int Y_OFFSET = 16;
 static const int UV_OFFSET = 128;
 static const int ROUNDING_BIAS = 128;
 static const int UV_AVG_BIAS = 2;  // round-half-up for 2x2 averaging (>> 2)
+static const int BYTES_PER_PIXEL = 4;
+static const int TIMESTAMP_SCALE_90KHZ = 90000;
 
 static char error_buf_[ERROR_BUF_SIZE] = {0};
 
@@ -340,9 +342,9 @@ int videoEncoderInit(const char* outputPath, int width, int height, int fps, int
 	}
 
 	// Set keyframe interval (in frames) and High profile
-	int intraPeriod = keyframeInterval * fps;
+	const int intraPeriod = keyframeInterval * fps;
 	(*encoder_)->SetOption(encoder_, ENCODER_OPTION_IDR_INTERVAL, &intraPeriod);
-	int profile = PRO_HIGH;
+	const int profile = PRO_HIGH;
 	(*encoder_)->SetOption(encoder_, ENCODER_OPTION_PROFILE, &profile);
 
 	// Initialize MP4 muxer
@@ -402,7 +404,7 @@ int videoEncoderAddFrame(const unsigned char* bgraPixels, int dataLength) {
 		return -1;
 	}
 
-	const int expectedLength = width_ * height_ * 4;
+	const int expectedLength = width_ * height_ * BYTES_PER_PIXEL;
 	if (dataLength != expectedLength) {
 		setError("Frame data length mismatch");
 		return -1;
@@ -438,7 +440,7 @@ int videoEncoderAddFrame(const unsigned char* bgraPixels, int dataLength) {
 	// Write encoded NALs to MP4
 	if (bsInfo.eFrameType != videoFrameTypeSkip) {
 		// Timestamp in 90kHz units for next frame
-		const unsigned nextTimestamp90k = (unsigned)((long long)(frame_index_ + 1) * 90000 / fps_);
+		const unsigned nextTimestamp90k = (unsigned)((long long)(frame_index_ + 1) * TIMESTAMP_SCALE_90KHZ / fps_);
 
 		for (int layer = 0; layer < bsInfo.iLayerNum; layer++) {
 			const SLayerBSInfo* layerInfo = &bsInfo.sLayerInfo[layer];

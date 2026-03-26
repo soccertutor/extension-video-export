@@ -7,13 +7,13 @@ import haxe.io.Bytes;
 /** Functional smoke test for the video encoder NDLL. */
 @:nullSafety(Strict) final class TestEncode {
 
-	private static final ALIGNED_SIZE: Int = 64;		// divisible by 16 — fully SIMD
-	private static final NON_ALIGNED_SIZE: Int = 62;  // not divisible by 8 or 16 — scalar tails
+	private static final ALIGNED_SIZE: Int = 64; // divisible by 16 — fully SIMD
+	private static final NON_ALIGNED_SIZE: Int = 62; // not divisible by 8 or 16 — scalar tails
 	private static final FPS: Int = 30;
 	private static final BITRATE: Int = 500000;
 	private static final FRAME_COUNT: Int = 30;
 	private static final MIN_OUTPUT_SIZE: Int = 100;
-	private static final BYTES_PER_PIXEL: Int = 4;	   // BGRA
+	private static final BYTES_PER_PIXEL: Int = 4; // BGRA
 	private static final OUTPUT: String = 'test_output.mp4';
 
 	public static function main(): Void {
@@ -63,7 +63,8 @@ import haxe.io.Bytes;
 			}
 
 			VideoEncoder.dispose();
-			if (sys.FileSystem.exists(OUTPUT)) sys.FileSystem.deleteFile(OUTPUT);
+			if (sys.FileSystem.exists(OUTPUT))
+				sys.FileSystem.deleteFile(OUTPUT);
 		}
 
 		Sys.println('  PASS GPU API callable');

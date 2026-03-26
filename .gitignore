@@ -12,3 +12,4 @@ test/ios/build/
 
 # Generated symlinks
 .hxcpp-include
+.ndk-sysroot

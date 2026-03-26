@@ -75,8 +75,15 @@ trap cleanup EXIT
 # Wait for device to boot
 "$ANDROID_HOME/platform-tools/adb" wait-for-device
 echo "Waiting for boot to complete..."
+BOOT_TIMEOUT=120
+BOOT_ELAPSED=0
 while [ "$("$ANDROID_HOME/platform-tools/adb" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" != "1" ]; do
 	sleep 2
+	BOOT_ELAPSED=$((BOOT_ELAPSED + 2))
+	if [ "$BOOT_ELAPSED" -ge "$BOOT_TIMEOUT" ]; then
+		echo "Error: emulator boot timed out after ${BOOT_TIMEOUT}s" >&2
+		exit 1
+	fi
 done
 echo "Emulator booted."
 

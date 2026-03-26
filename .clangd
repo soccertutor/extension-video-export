@@ -27,3 +27,18 @@ If:
   PathMatch: [.*\.c]
 CompileFlags:
   Add: [-std=c11]
+---
+If:
+  PathMatch: [test/ios/.*]
+CompileFlags:
+  Add:
+    - --target=arm64-apple-ios18.0-simulator
+    - -isysroot
+    - /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk
+---
+If:
+  PathMatch: [test/android/.*]
+CompileFlags:
+  Add:
+    - --target=aarch64-linux-android26
+    - --sysroot=.ndk-sysroot

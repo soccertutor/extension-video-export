@@ -176,8 +176,10 @@ static void restoreEglState(const EglState& s) {
 // ---------------------------------------------------------------------------
 
 static void releaseGpuResources(void) {
-	// Context may already be destroyed during dispose — just null the pointer
-	if (blit_fence_) blit_fence_ = NULL;
+	if (blit_fence_) {
+		glDeleteSync(blit_fence_);
+		blit_fence_ = nullptr;
+	}
 	if (egl_display_ != EGL_NO_DISPLAY) {
 		if (egl_surface_ != EGL_NO_SURFACE) {
 			eglDestroySurface(egl_display_, egl_surface_);
@@ -455,6 +457,48 @@ static int drainEncoder(bool endOfStream) {
 }
 
 // ---------------------------------------------------------------------------
+// Shared init helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Open output file, create muxer, create codec, and configure it.
+ * Used by both CPU (COLOR_FORMAT_NV12) and GPU (COLOR_FORMAT_SURFACE) paths.
+ * Caller must call AMediaCodec_start() after any path-specific setup (e.g. createInputSurface).
+ * Returns 0 on success, -1 on error (error_buf_ set).
+ */
+static int initCommon(const char* outputPath, int width, int height, int fps, int bitrate, int keyframeInterval, int colorFormat) {
+	// Open output file descriptor for muxer
+	muxer_fd_ = open(outputPath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	if (muxer_fd_ < 0) {
+		setError("Cannot open output file: %s", outputPath);
+		return -1;
+	}
+
+	// Create muxer
+	muxer_ = AMediaMuxer_new(muxer_fd_, AMEDIAMUXER_OUTPUT_FORMAT_MPEG_4);
+	if (!muxer_) {
+		setError("AMediaMuxer_new failed");
+		return -1;
+	}
+
+	// Create H.264 encoder
+	codec_ = AMediaCodec_createEncoderByType(MIME_H264);
+	if (!codec_) {
+		setError("AMediaCodec_createEncoderByType failed for video/avc");
+		return -1;
+	}
+
+	// Configure encoder with best available profile (High → Main → Baseline)
+	const media_status_t status = configureWithBestProfile(codec_, width, height, fps, bitrate, keyframeInterval, colorFormat);
+	if (status != AMEDIA_OK) {
+		setError("AMediaCodec_configure failed: %d", (int)status);
+		return -1;
+	}
+
+	return 0;
+}
+
+// ---------------------------------------------------------------------------
 // Public C API
 // ---------------------------------------------------------------------------
 
@@ -469,39 +513,17 @@ int videoEncoderInit(const char* outputPath, int width, int height, int fps, int
 		setError("Invalid encoder parameters");
 		return -1;
 	}
-
-	// Open output file descriptor for muxer
-	muxer_fd_ = open(outputPath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-	if (muxer_fd_ < 0) {
-		setError("Cannot open output file: %s", outputPath);
+	if (width % 2 != 0 || height % 2 != 0) {
+		setError("Width and height must be even");
 		return -1;
 	}
 
-	// Create muxer
-	muxer_ = AMediaMuxer_new(muxer_fd_, AMEDIAMUXER_OUTPUT_FORMAT_MPEG_4);
-	if (!muxer_) {
-		setError("AMediaMuxer_new failed");
+	if (initCommon(outputPath, width, height, fps, bitrate, keyframeInterval, COLOR_FORMAT_NV12) != 0) {
 		releaseResources();
 		return -1;
 	}
 
-	// Create H.264 encoder
-	codec_ = AMediaCodec_createEncoderByType(MIME_H264);
-	if (!codec_) {
-		setError("AMediaCodec_createEncoderByType failed for video/avc");
-		releaseResources();
-		return -1;
-	}
-
-	// Configure encoder with best available profile (High → Main → Baseline)
-	media_status_t status = configureWithBestProfile(codec_, width, height, fps, bitrate, keyframeInterval, COLOR_FORMAT_NV12);
-	if (status != AMEDIA_OK) {
-		setError("AMediaCodec_configure failed: %d", (int)status);
-		releaseResources();
-		return -1;
-	}
-
-	status = AMediaCodec_start(codec_);
+	const media_status_t status = AMediaCodec_start(codec_);
 	if (status != AMEDIA_OK) {
 		setError("AMediaCodec_start failed: %d", (int)status);
 		releaseResources();
@@ -594,7 +616,11 @@ int videoEncoderFinish(void) {
 		}
 	} else {
 		ssize_t inputIdx = AMediaCodec_dequeueInputBuffer(codec_, INPUT_TIMEOUT_US);
-		if (inputIdx >= 0) AMediaCodec_queueInputBuffer(codec_, (size_t)inputIdx, 0, 0, 0, AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM);
+		if (inputIdx < 0) {
+			setError("dequeueInputBuffer for EOS failed");
+			return -1;
+		}
+		AMediaCodec_queueInputBuffer(codec_, (size_t)inputIdx, 0, 0, 0, AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM);
 	}
 
 	// Drain all remaining output
@@ -654,34 +680,12 @@ int videoEncoderInitGpu(const char* outputPath, int width, int height, int fps, 
 		setError("Invalid encoder parameters");
 		return -1;
 	}
-
-	// Open output file descriptor for muxer
-	muxer_fd_ = open(outputPath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-	if (muxer_fd_ < 0) {
-		setError("Cannot open output file: %s", outputPath);
+	if (width % 2 != 0 || height % 2 != 0) {
+		setError("Width and height must be even");
 		return -1;
 	}
 
-	// Create muxer
-	muxer_ = AMediaMuxer_new(muxer_fd_, AMEDIAMUXER_OUTPUT_FORMAT_MPEG_4);
-	if (!muxer_) {
-		setError("AMediaMuxer_new failed");
-		releaseResources();
-		return -1;
-	}
-
-	// Create H.264 encoder
-	codec_ = AMediaCodec_createEncoderByType(MIME_H264);
-	if (!codec_) {
-		setError("AMediaCodec_createEncoderByType failed for video/avc");
-		releaseResources();
-		return -1;
-	}
-
-	// Configure encoder with best available profile (High → Main → Baseline)
-	media_status_t status = configureWithBestProfile(codec_, width, height, fps, bitrate, keyframeInterval, COLOR_FORMAT_SURFACE);
-	if (status != AMEDIA_OK) {
-		setError("AMediaCodec_configure failed: %d", (int)status);
+	if (initCommon(outputPath, width, height, fps, bitrate, keyframeInterval, COLOR_FORMAT_SURFACE) != 0) {
 		releaseResources();
 		return -1;
 	}
@@ -692,7 +696,7 @@ int videoEncoderInitGpu(const char* outputPath, int width, int height, int fps, 
 		releaseResources();
 		return -1;
 	}
-	status = AMediaCodec_createInputSurface(codec_, &input_surface_);
+	media_status_t status = AMediaCodec_createInputSurface(codec_, &input_surface_);
 	if (status != AMEDIA_OK || !input_surface_) {
 		setError("AMediaCodec_createInputSurface failed: %d", (int)status);
 		releaseGpuResources();
@@ -789,7 +793,11 @@ int videoEncoderSubmitGpuFrame(void) {
 	}
 
 	// Submit frame to encoder via eglSwapBuffers
-	eglSwapBuffers(egl_display_, egl_surface_);
+	if (!eglSwapBuffers(egl_display_, egl_surface_)) {
+		setError("eglSwapBuffers failed");
+		restoreEglState(saved);
+		return -1;
+	}
 
 	restoreEglState(saved);
 

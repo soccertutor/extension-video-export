@@ -38,6 +38,6 @@ CheckOptions:
   - key: readability-identifier-naming.GlobalConstantCase
     value: UPPER_CASE
 
-HeaderFilterRegex: '^.*/native/.*\.(h|hpp|c|cpp|mm)$|^.*/project/common/.*\.(h|hpp|cpp)$'
+HeaderFilterRegex: '^.*/native/(?!minimp4\.h).*\.(h|hpp|c|cpp|mm)$|^.*/project/common/.*\.(h|hpp|cpp)$'
 
 FormatStyle: file

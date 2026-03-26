@@ -669,6 +669,107 @@ static HRESULT writeSampleFromBGRA(const unsigned char* bgraPixels, LONGLONG tim
 }
 
 // ---------------------------------------------------------------------------
+// Shared MF initialization — COM, MF startup, SinkWriter, streams, BeginWriting
+// ---------------------------------------------------------------------------
+
+static HRESULT
+initCommon(const char* outputPath, int width, int height, int fps, int bitrate, int keyframeInterval, bool topDown, bool useD3D11) {
+	// Initialize COM
+	HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+	if (SUCCEEDED(hr) || hr == S_FALSE) {
+		com_initialized_ = TRUE;
+	} else if (hr == RPC_E_CHANGED_MODE) {
+		// COM already initialized with different threading model — that's OK
+		com_initialized_ = FALSE;
+	} else {
+		setErrorHR("CoInitializeEx", hr);
+		return hr;
+	}
+
+	// Start Media Foundation
+	hr = MFStartup(MF_VERSION);
+	if (FAILED(hr)) {
+		setErrorHR("MFStartup", hr);
+		return hr;
+	}
+	mf_started_ = TRUE;
+
+	// Delete existing file
+	DeleteFileA(outputPath);
+
+	// Create SinkWriter (with D3D11 manager when useD3D11 is true)
+	hr = createSinkWriter(outputPath, useD3D11, &writer_);
+	if (FAILED(hr)) {
+		setErrorHR("MFCreateSinkWriterFromURL", hr);
+		return hr;
+	}
+
+	// Add H.264 output stream
+	IMFMediaType* pOutputType = NULL;
+	hr = createOutputType(width, height, fps, bitrate, keyframeInterval, &pOutputType);
+	if (FAILED(hr)) {
+		setErrorHR("Create output media type", hr);
+		return hr;
+	}
+
+	hr = writer_->AddStream(pOutputType, &stream_index_);
+	safeRelease(&pOutputType);
+	if (FAILED(hr)) {
+		setErrorHR("AddStream", hr);
+		return hr;
+	}
+
+	// Set BGRA input type
+	IMFMediaType* pInputType = NULL;
+	hr = createInputType(width, height, fps, topDown, &pInputType);
+	if (FAILED(hr)) {
+		setErrorHR("Create input media type", hr);
+		return hr;
+	}
+
+	hr = writer_->SetInputMediaType(stream_index_, pInputType, NULL);
+	safeRelease(&pInputType);
+	if (FAILED(hr)) {
+		setErrorHR("SetInputMediaType", hr);
+		return hr;
+	}
+
+	// Start writing
+	hr = writer_->BeginWriting();
+	if (FAILED(hr)) {
+		setErrorHR("BeginWriting", hr);
+		return hr;
+	}
+
+	// Pre-allocate reusable buffer and sample
+	buffer_size_ = width * height * BYTES_PER_PIXEL;
+	hr = MFCreateMemoryBuffer(buffer_size_, &buffer_);
+	if (FAILED(hr)) {
+		setErrorHR("MFCreateMemoryBuffer", hr);
+		return hr;
+	}
+
+	hr = MFCreateSample(&sample_);
+	if (FAILED(hr)) {
+		setErrorHR("MFCreateSample", hr);
+		return hr;
+	}
+
+	hr = sample_->AddBuffer(buffer_);
+	if (FAILED(hr)) {
+		setErrorHR("AddBuffer", hr);
+		return hr;
+	}
+
+	width_ = width;
+	height_ = height;
+	fps_ = fps;
+	frame_index_ = 0;
+
+	return S_OK;
+}
+
+// ---------------------------------------------------------------------------
 // Public C API
 // ---------------------------------------------------------------------------
 
@@ -703,107 +804,17 @@ int videoEncoderInit(const char* outputPath, int width, int height, int fps, int
 		return -1;
 	}
 
-	// Initialize COM
-	HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
-	if (SUCCEEDED(hr) || hr == S_FALSE) {
-		com_initialized_ = TRUE;
-	} else if (hr == RPC_E_CHANGED_MODE) {
-		// COM already initialized with different threading model — that's OK
-		com_initialized_ = FALSE;
-	} else {
-		setErrorHR("CoInitializeEx", hr);
+	if (width % 2 != 0 || height % 2 != 0) {
+		setError("Width and height must be even");
 		return -1;
 	}
 
-	// Start Media Foundation
-	hr = MFStartup(MF_VERSION);
+	// bottom-up stride (OpenFL BitmapData convention); no D3D11 for CPU path
+	HRESULT hr = initCommon(outputPath, width, height, fps, bitrate, keyframeInterval, false, false);
 	if (FAILED(hr)) {
-		setErrorHR("MFStartup", hr);
 		releaseResources();
 		return -1;
 	}
-	mf_started_ = TRUE;
-
-	// Delete existing file
-	DeleteFileA(outputPath);
-
-	// Create SinkWriter (no D3D11 for CPU path)
-	hr = createSinkWriter(outputPath, false, &writer_);
-	if (FAILED(hr)) {
-		setErrorHR("MFCreateSinkWriterFromURL", hr);
-		releaseResources();
-		return -1;
-	}
-
-	// Add H.264 output stream
-	IMFMediaType* pOutputType = NULL;
-	hr = createOutputType(width, height, fps, bitrate, keyframeInterval, &pOutputType);
-	if (FAILED(hr)) {
-		setErrorHR("Create output media type", hr);
-		releaseResources();
-		return -1;
-	}
-
-	hr = writer_->AddStream(pOutputType, &stream_index_);
-	safeRelease(&pOutputType);
-	if (FAILED(hr)) {
-		setErrorHR("AddStream", hr);
-		releaseResources();
-		return -1;
-	}
-
-	// Set BGRA input type (bottom-up for CPU path)
-	IMFMediaType* pInputType = NULL;
-	hr = createInputType(width, height, fps, false, &pInputType);
-	if (FAILED(hr)) {
-		setErrorHR("Create input media type", hr);
-		releaseResources();
-		return -1;
-	}
-
-	hr = writer_->SetInputMediaType(stream_index_, pInputType, NULL);
-	safeRelease(&pInputType);
-	if (FAILED(hr)) {
-		setErrorHR("SetInputMediaType", hr);
-		releaseResources();
-		return -1;
-	}
-
-	// Start writing
-	hr = writer_->BeginWriting();
-	if (FAILED(hr)) {
-		setErrorHR("BeginWriting", hr);
-		releaseResources();
-		return -1;
-	}
-
-	// Pre-allocate reusable buffer and sample for addFrame
-	buffer_size_ = width * height * BYTES_PER_PIXEL;
-	hr = MFCreateMemoryBuffer(buffer_size_, &buffer_);
-	if (FAILED(hr)) {
-		setErrorHR("MFCreateMemoryBuffer", hr);
-		releaseResources();
-		return -1;
-	}
-
-	hr = MFCreateSample(&sample_);
-	if (FAILED(hr)) {
-		setErrorHR("MFCreateSample", hr);
-		releaseResources();
-		return -1;
-	}
-
-	hr = sample_->AddBuffer(buffer_);
-	if (FAILED(hr)) {
-		setErrorHR("AddBuffer", hr);
-		releaseResources();
-		return -1;
-	}
-
-	width_ = width;
-	height_ = height;
-	fps_ = fps;
-	frame_index_ = 0;
 
 	return 0;
 }
@@ -855,10 +866,13 @@ int videoEncoderFinish(void) {
 		int prev = 1 - pbo_index_;
 		glBindBuffer_(GL_PIXEL_PACK_BUFFER, pbo_ids_[prev]);
 		void* mapped = glMapBuffer_(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
-		if (mapped) {
-			memcpy(readback_buf_, mapped, buffer_size_);
-			glUnmapBuffer_(GL_PIXEL_PACK_BUFFER);
+		if (!mapped) {
+			setError("glMapBuffer failed");
+			glBindBuffer_(GL_PIXEL_PACK_BUFFER, 0);
+			return -1;
 		}
+		memcpy(readback_buf_, mapped, buffer_size_);
+		glUnmapBuffer_(GL_PIXEL_PACK_BUFFER);
 		glBindBuffer_(GL_PIXEL_PACK_BUFFER, 0);
 
 		HRESULT flushHr = writeSampleFromBGRA(readback_buf_, timestamp, frameDuration);
@@ -905,34 +919,16 @@ int videoEncoderInitGpu(const char* outputPath, int width, int height, int fps, 
 		return -1;
 	}
 
+	if (width % 2 != 0 || height % 2 != 0) {
+		setError("Width and height must be even");
+		return -1;
+	}
+
 	// Resolve GL extension functions (requires active WGL context)
 	if (!resolveGlFunctions()) {
 		setError("Failed to resolve GL functions — no WGL context?");
 		return -1;
 	}
-
-	// Initialize COM
-	HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
-	if (SUCCEEDED(hr) || hr == S_FALSE) {
-		com_initialized_ = TRUE;
-	} else if (hr == RPC_E_CHANGED_MODE) {
-		com_initialized_ = FALSE;
-	} else {
-		setErrorHR("CoInitializeEx", hr);
-		return -1;
-	}
-
-	// Start Media Foundation
-	hr = MFStartup(MF_VERSION);
-	if (FAILED(hr)) {
-		setErrorHR("MFStartup", hr);
-		releaseResources();
-		return -1;
-	}
-	mf_started_ = TRUE;
-
-	// Delete existing file
-	DeleteFileA(outputPath);
 
 	// Probe D3D11 interop support (WGL_NV_DX_interop2).
 	// Zero-copy on NVIDIA/some AMD; falls back to PBO readback on Intel/others.
@@ -944,94 +940,15 @@ int videoEncoderInitGpu(const char* outputPath, int width, int height, int fps, 
 		}
 	}
 
-	// Create SinkWriter (with D3D11 manager if interop is available)
-	hr = createSinkWriter(outputPath, interop_available_, &writer_);
+	// bottom-up stride — MF negative stride handles Y-flip; use D3D11 if interop succeeded
+	HRESULT hr = initCommon(outputPath, width, height, fps, bitrate, keyframeInterval, false, interop_available_);
 	if (FAILED(hr)) {
-		setErrorHR("MFCreateSinkWriterFromURL", hr);
-		releaseGpuResources();
-		releaseResources();
-		return -1;
-	}
-
-	// Add H.264 output stream
-	IMFMediaType* pOutputType = NULL;
-	hr = createOutputType(width, height, fps, bitrate, keyframeInterval, &pOutputType);
-	if (FAILED(hr)) {
-		setErrorHR("Create output media type", hr);
-		releaseGpuResources();
-		releaseResources();
-		return -1;
-	}
-
-	hr = writer_->AddStream(pOutputType, &stream_index_);
-	safeRelease(&pOutputType);
-	if (FAILED(hr)) {
-		setErrorHR("AddStream", hr);
-		releaseGpuResources();
-		releaseResources();
-		return -1;
-	}
-
-	// Set BGRA input type (bottom-up — MF negative stride handles Y-flip)
-	IMFMediaType* pInputType = NULL;
-	hr = createInputType(width, height, fps, false, &pInputType);
-	if (FAILED(hr)) {
-		setErrorHR("Create input media type", hr);
-		releaseGpuResources();
-		releaseResources();
-		return -1;
-	}
-
-	hr = writer_->SetInputMediaType(stream_index_, pInputType, NULL);
-	safeRelease(&pInputType);
-	if (FAILED(hr)) {
-		setErrorHR("SetInputMediaType", hr);
-		releaseGpuResources();
-		releaseResources();
-		return -1;
-	}
-
-	// Start writing
-	hr = writer_->BeginWriting();
-	if (FAILED(hr)) {
-		setErrorHR("BeginWriting", hr);
-		releaseGpuResources();
-		releaseResources();
-		return -1;
-	}
-
-	// Pre-allocate reusable buffer and sample (used by fallback path, harmless for interop)
-	buffer_size_ = width * height * BYTES_PER_PIXEL;
-	hr = MFCreateMemoryBuffer(buffer_size_, &buffer_);
-	if (FAILED(hr)) {
-		setErrorHR("MFCreateMemoryBuffer", hr);
-		releaseGpuResources();
-		releaseResources();
-		return -1;
-	}
-
-	hr = MFCreateSample(&sample_);
-	if (FAILED(hr)) {
-		setErrorHR("MFCreateSample", hr);
-		releaseGpuResources();
-		releaseResources();
-		return -1;
-	}
-
-	hr = sample_->AddBuffer(buffer_);
-	if (FAILED(hr)) {
-		setErrorHR("AddBuffer", hr);
 		releaseGpuResources();
 		releaseResources();
 		return -1;
 	}
 
 	gpu_mode_ = true;
-	width_ = width;
-	height_ = height;
-	fps_ = fps;
-	frame_index_ = 0;
-
 	return 0;
 }
 
@@ -1179,10 +1096,13 @@ int videoEncoderSubmitGpuFrame(void) {
 			int prev = 1 - pbo_index_;
 			glBindBuffer_(GL_PIXEL_PACK_BUFFER, pbo_ids_[prev]);
 			void* mapped = glMapBuffer_(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
-			if (mapped) {
-				memcpy(readback_buf_, mapped, buffer_size_);
-				glUnmapBuffer_(GL_PIXEL_PACK_BUFFER);
+			if (!mapped) {
+				setError("glMapBuffer failed");
+				glBindBuffer_(GL_PIXEL_PACK_BUFFER, 0);
+				return -1;
 			}
+			memcpy(readback_buf_, mapped, buffer_size_);
+			glUnmapBuffer_(GL_PIXEL_PACK_BUFFER);
 			glBindBuffer_(GL_PIXEL_PACK_BUFFER, 0);
 
 			hr = writeSampleFromBGRA(readback_buf_, prevTimestamp, frameDuration);

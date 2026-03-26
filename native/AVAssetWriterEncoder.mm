@@ -17,6 +17,7 @@
 #import <CoreMedia/CoreMedia.h>
 #import <CoreVideo/CoreVideo.h>
 #include <string.h>
+#include <os/lock.h>
 
 #import <Metal/Metal.h>
 #import <CoreVideo/CVMetalTexture.h>
@@ -49,6 +50,7 @@ static int height_ = 0;
 static int fps_ = 0;
 static int frame_index_ = 0;
 static char error_buf_[ERROR_BUF_SIZE] = {0};
+static os_unfair_lock error_lock_ = OS_UNFAIR_LOCK_INIT;
 static const int BUFFER_COUNT = 2;
 static CVPixelBufferRef gpu_pixel_buffers_[BUFFER_COUNT] = {NULL, NULL};
 static GLuint io_surface_fbos_[BUFFER_COUNT] = {0, 0};
@@ -92,11 +94,15 @@ static GLuint pbo_[BUFFER_COUNT] = {0, 0};	// fallback if Metal not available
 
 static void setError(NSString *message) {
 	const char *utf8 = [message UTF8String];
+	os_unfair_lock_lock(&error_lock_);
 	strlcpy(error_buf_, utf8, ERROR_BUF_SIZE);
+	os_unfair_lock_unlock(&error_lock_);
 }
 
 static void clearError(void) {
+	os_unfair_lock_lock(&error_lock_);
 	error_buf_[0] = '\0';
+	os_unfair_lock_unlock(&error_lock_);
 }
 
 /** Release all GPU pixel buffers and platform-specific surface resources. */
@@ -169,6 +175,7 @@ static int initAssetWriter(const char *outputPath, int width, int height, int fp
 	// Remove existing file
 	NSString *path = [NSString stringWithUTF8String:outputPath];
 	NSFileManager *fm = [NSFileManager defaultManager];
+	// NOLINTNEXTLINE(clang-analyzer-nullability.NullablePassedToNonnull)
 	if ([fm fileExistsAtPath:path]) [fm removeItemAtPath:path error:nil];
 
 	NSURL *url = [NSURL fileURLWithPath:path];
@@ -254,6 +261,10 @@ int videoEncoderInit(const char *outputPath, int width, int height, int fps, int
 
 		if (width <= 0 || height <= 0 || fps <= 0 || bitrate <= 0 || keyframeInterval <= 0) {
 			setError(@"Invalid encoder parameters");
+			return -1;
+		}
+		if (width % 2 != 0 || height % 2 != 0) {
+			setError(@"Width and height must be even");
 			return -1;
 		}
 
@@ -374,6 +385,7 @@ int videoEncoderFinish(void) {
 			dispatch_semaphore_signal(semaphore);
 		}];
 
+		// NOLINTNEXTLINE(clang-analyzer-optin.performance.GCDAntipattern)
 		dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
 
 		return success ? 0 : -1;
@@ -417,12 +429,20 @@ void videoEncoderDispose(void) {
 }
 
 const char *videoEncoderGetError(void) {
-	return error_buf_[0] != '\0' ? error_buf_ : NULL;
+	os_unfair_lock_lock(&error_lock_);
+	const char *result = error_buf_[0] != '\0' ? error_buf_ : NULL;
+	os_unfair_lock_unlock(&error_lock_);
+	return result;
 }
 
 int videoEncoderSupportsGpuInput(void) {
-	id<MTLDevice> device = MTLCreateSystemDefaultDevice();
-	return device != nil ? 1 : 0;
+	static id<MTLDevice> cached_device_ = nil;
+	static bool device_checked_ = false;
+	if (!device_checked_) {
+		cached_device_ = MTLCreateSystemDefaultDevice();
+		device_checked_ = true;
+	}
+	return cached_device_ != nil ? 1 : 0;
 }
 
 int videoEncoderInitGpu(const char *outputPath, int width, int height, int fps, int bitrate, int keyframeInterval) {
@@ -431,6 +451,10 @@ int videoEncoderInitGpu(const char *outputPath, int width, int height, int fps, 
 
 		if (width <= 0 || height <= 0 || fps <= 0 || bitrate <= 0 || keyframeInterval <= 0) {
 			setError(@"Invalid encoder parameters");
+			return -1;
+		}
+		if (width % 2 != 0 || height % 2 != 0) {
+			setError(@"Width and height must be even");
 			return -1;
 		}
 
@@ -741,6 +765,7 @@ void videoEncoderBlitGpuFrame(unsigned int srcFbo, int width, int height) {
 
 		// Get fresh CVPixelBuffer from encoder pool
 		CVPixelBufferRef freshPb = NULL;
+		// NOLINTNEXTLINE(clang-analyzer-nullability.NullablePassedToNonnull)
 		CVReturn poolRet = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, adaptor_.pixelBufferPool, &freshPb);
 		if (poolRet != kCVReturnSuccess || !freshPb) {
 			setError(@"Failed to get fresh CVPixelBuffer from pool");
@@ -829,6 +854,9 @@ void videoEncoderBlitGpuFrame(unsigned int srcFbo, int width, int height) {
 					memcpy((uint8_t *)dst + row * dstStride, (const uint8_t *)pboData + row * rowBytes, rowBytes);
 			CVPixelBufferUnlockBaseAddress(gpu_pixel_buffers_[current_buf_], 0);
 			glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+		} else {
+			setError(@"glMapBufferRange failed — stale frame skipped");
+			async_error_ = true;
 		}
 		glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
 	}
