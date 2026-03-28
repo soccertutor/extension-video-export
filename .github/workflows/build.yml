@@ -12,7 +12,7 @@ env:
 jobs:
   detect-release:
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'soccertutor/extension-video-export'
     outputs:
       is_release: ${{ steps.check.outputs.is_release }}
       version: ${{ steps.check.outputs.version }}
@@ -233,7 +233,7 @@ jobs:
   publish:
     needs: [detect-release, build, test-android, test-ios]
     runs-on: ubuntu-latest
-    if: needs.detect-release.outputs.is_release == 'true'
+    if: needs.detect-release.outputs.is_release == 'true' && github.repository == 'soccertutor/extension-video-export'
     permissions:
       contents: write
     env:
