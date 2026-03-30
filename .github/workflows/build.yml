@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 env:
-  HAXE_VERSION: "4.3.4"
+  HAXE_VERSION: "4.3.6"
 
 jobs:
   detect-release:
@@ -91,7 +91,8 @@ jobs:
       - name: Install Haxe dependencies
         run: |
           haxelib setup ~/haxelib
-          haxelib install hxcpp --quiet
+          curl -sL -o /tmp/hxcpp.zip https://github.com/HaxeFoundation/hxcpp/releases/download/v4.3.140/hxcpp-4.3.140.zip
+          haxelib install /tmp/hxcpp.zip --quiet
           haxelib install lime --quiet
           haxelib dev extension-video-export .
 
@@ -112,14 +113,6 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-
-      - name: Install hxcpp with NDK r26c support (Android)
-        if: matrix.target == 'android'
-        run: |
-          curl -sL -o /tmp/hxcpp.zip https://github.com/HaxeFoundation/hxcpp/releases/download/v4.3.45/hxcpp-4.3.45.zip
-          # TODO: add sha256sum verification once hash is recorded
-          # echo "<expected_hash>  /tmp/hxcpp.zip" | sha256sum -c
-          haxelib install /tmp/hxcpp.zip --quiet
 
       - name: Configure Lime for Android
         if: matrix.target == 'android'
