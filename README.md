@@ -1,6 +1,6 @@
 # extension-video-export
 
-[![Build](https://img.shields.io/github/actions/workflow/status/soccertutor/extension-video-export/build.yml)](https://github.com/soccertutor/extension-video-export/actions/workflows/build.yml) [![Haxelib](https://img.shields.io/badge/haxelib-v0.3.3-blue)](https://lib.haxe.org/p/extension-video-export/) [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Build](https://img.shields.io/github/actions/workflow/status/soccertutor/extension-video-export/build.yml)](https://github.com/soccertutor/extension-video-export/actions/workflows/build.yml) [![Haxelib](https://img.shields.io/badge/haxelib-v0.3.4-blue)](https://lib.haxe.org/p/extension-video-export/) [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 Cross-platform H.264/MP4 video encoder for [OpenFL](https://www.openfl.org/) / hxcpp.
 

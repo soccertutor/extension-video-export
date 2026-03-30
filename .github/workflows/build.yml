@@ -45,6 +45,7 @@ jobs:
             runner: macos-15
             flags: "-64 -release"
             ndll_dir: Mac64
+            haxe_extra: "-D HXCPP_M64"
           - target: mac
             label: mac-arm64
             runner: macos-15
