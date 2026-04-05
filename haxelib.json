@@ -3,9 +3,9 @@
   "url": "https://github.com/soccertutor/extension-video-export",
   "license": "MIT",
   "description": "Cross-platform H.264/MP4 video encoder for OpenFL/hxcpp",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "contributors": ["soccertutor", "AxGord"],
   "tags": ["openfl", "video", "encoder", "native"],
-  "releasenote": "Windows GPU: disable D3D11 interop, use PBO readback for reliability",
+  "releasenote": "Add Android x86 build for emulator support",
   "dependencies": {}
 }

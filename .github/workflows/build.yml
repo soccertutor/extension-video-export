@@ -126,6 +126,10 @@ jobs:
       - name: Build NDLL
         run: haxelib run lime rebuild . ${{ matrix.target }} ${{ matrix.flags }}
 
+      - name: Build NDLL (Android x86)
+        if: matrix.target == 'android'
+        run: haxelib run lime rebuild . android -x86 -release
+
       - name: Compile functional test
         if: matrix.target != 'android' && matrix.target != 'ios'
         run: haxe test.hxml ${{ matrix.haxe_extra }}
