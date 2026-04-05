@@ -128,7 +128,9 @@ jobs:
 
       - name: Build NDLL (Android x86)
         if: matrix.target == 'android'
-        run: haxelib run lime rebuild . android -x86 -release
+        run: cd project && haxelib run hxcpp Build.xml -Dandroid -DHXCPP_X86 -DPLATFORM=android-21 -DPLATFORM_NUMBER=21 && cd ..
+        env:
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
 
       - name: Compile functional test
         if: matrix.target != 'android' && matrix.target != 'ios'
