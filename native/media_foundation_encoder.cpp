@@ -561,7 +561,7 @@ static HRESULT createOutputType(int width, int height, int fps, int bitrate, int
 // Create an IMFMediaType for the BGRA input stream
 // ---------------------------------------------------------------------------
 
-static HRESULT createInputType(int width, int height, int fps, bool topDown, IMFMediaType** ppType) {
+static HRESULT createInputType(int width, int height, int fps, bool topDown, bool useARGB, IMFMediaType** ppType) {
 	IMFMediaType* pType = NULL;
 	HRESULT hr = MFCreateMediaType(&pType);
 	if (FAILED(hr)) return hr;
@@ -572,8 +572,9 @@ static HRESULT createInputType(int width, int height, int fps, bool topDown, IMF
 		return hr;
 	}
 
-	// MFVideoFormat_RGB32 is BGRA in memory on little-endian Windows
-	hr = pType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32);
+	// RGB32 = B8G8R8X8 (no alpha), ARGB32 = B8G8R8A8 (with alpha).
+	// D3D11 interop textures are B8G8R8A8 — must use ARGB32 to match.
+	hr = pType->SetGUID(MF_MT_SUBTYPE, useARGB ? MFVideoFormat_ARGB32 : MFVideoFormat_RGB32);
 	if (FAILED(hr)) {
 		pType->Release();
 		return hr;
@@ -721,7 +722,7 @@ initCommon(const char* outputPath, int width, int height, int fps, int bitrate, 
 
 	// Set BGRA input type
 	IMFMediaType* pInputType = NULL;
-	hr = createInputType(width, height, fps, topDown, &pInputType);
+	hr = createInputType(width, height, fps, topDown, useD3D11, &pInputType);
 	if (FAILED(hr)) {
 		setErrorHR("Create input media type", hr);
 		return hr;
@@ -930,6 +931,15 @@ int videoEncoderInitGpu(const char* outputPath, int width, int height, int fps, 
 		return -1;
 	}
 
+	// TODO: D3D11 interop (WGL_NV_DX_interop2) is disabled pending fixes.
+	// Intel Arc drivers falsely report WGL_NV_DX_interop2 support but WriteSample
+	// fails with E_INVALIDARG (0x80070057). Suspected causes:
+	// - DXGI surface format mismatch (B8G8R8A8 vs RGB32/ARGB32)
+	// - D3D11 device created on wrong adapter (iGPU vs dGPU)
+	// - Intel's interop implementation is incomplete
+	// To re-enable: remove the forced override below and test on real NVIDIA hardware.
+	interop_available_ = false;
+#if 0
 	// Probe D3D11 interop support (WGL_NV_DX_interop2).
 	// Zero-copy on NVIDIA/some AMD; falls back to PBO readback on Intel/others.
 	interop_available_ = checkInteropSupport();
@@ -939,9 +949,22 @@ int videoEncoderInitGpu(const char* outputPath, int width, int height, int fps, 
 			interop_available_ = false;
 		}
 	}
+#endif
 
-	// bottom-up stride — MF negative stride handles Y-flip; use D3D11 if interop succeeded
-	HRESULT hr = initCommon(outputPath, width, height, fps, bitrate, keyframeInterval, false, interop_available_);
+#ifdef _DEBUG
+	const char* gl_renderer = (const char*)glGetString(GL_RENDERER);
+	const char* gl_version = (const char*)glGetString(GL_VERSION);
+	printf("[VideoExport] GL_RENDERER: %s\n", gl_renderer ? gl_renderer : "(null)");
+	printf("[VideoExport] GL_VERSION:  %s\n", gl_version ? gl_version : "(null)");
+	printf("[VideoExport] D3D11 interop: disabled (PBO fallback)\n");
+	fflush(stdout);
+#endif
+
+	// Interop: top-down stride — D3D11 textures are top-down and MF validates DXGI buffers
+	// against declared stride. Blit skips Y-flip (OpenFL FBO is already top-down via projection).
+	// Fallback: bottom-up stride — Y-flip blit + glReadPixels produces bottom-up buffer,
+	// MF applies negative-stride flip during encoding.
+	HRESULT hr = initCommon(outputPath, width, height, fps, bitrate, keyframeInterval, interop_available_, interop_available_);
 	if (FAILED(hr)) {
 		releaseGpuResources();
 		releaseResources();
@@ -949,6 +972,17 @@ int videoEncoderInitGpu(const char* outputPath, int width, int height, int fps, 
 	}
 
 	gpu_mode_ = true;
+#ifdef _DEBUG
+	printf(
+		"[VideoExport] GPU encoder ready (interop=%d, pbo=%d, %dx%d @ %dfps)\n",
+		(int)interop_available_,
+		(int)pbo_active_,
+		width,
+		height,
+		fps
+	);
+	fflush(stdout);
+#endif
 	return 0;
 }
 
@@ -978,14 +1012,14 @@ void videoEncoderBlitGpuFrame(unsigned int srcFbo, int width, int height) {
 	if (!gpu_mode_) return;
 
 	if (interop_available_) {
-		// D3D11 interop: lock, blit with Y-flip, unlock.
-		// DXGI textures are always top-down — MF_MT_DEFAULT_STRIDE is ignored for GPU surfaces.
-		// Must flip here because GL FBO origin is bottom-left, D3D11 is top-left.
+		// D3D11 interop: lock, blit WITHOUT Y-flip, unlock.
+		// OpenFL renders with a projection flip, so FBO content is already top-down.
+		// D3D11 textures are top-down — no flip needed, just copy.
 		wglDXLockObjectsNV_(interop_device_, 1, &interop_object_);
 
 		glBindFramebuffer_(GL_READ_FRAMEBUFFER, srcFbo);
 		glBindFramebuffer_(GL_DRAW_FRAMEBUFFER, interop_fbo_);
-		glBlitFramebuffer_(0, 0, width, height, 0, height, width, 0, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+		glBlitFramebuffer_(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 
 		// Fence to ensure blit completes before submitGpuFrame copies via D3D11
 		if (blit_fence_) glDeleteSync_(blit_fence_);
@@ -1025,6 +1059,16 @@ int videoEncoderSubmitGpuFrame(void) {
 	LONGLONG timestamp = (LONGLONG)frame_index_ * frameDuration;
 
 	HRESULT hr;
+
+#ifdef _DEBUG
+	if (frame_index_ == 0) {
+		printf(
+			"[VideoExport] submitGpuFrame path: %s\n",
+			interop_available_ ? "D3D11 interop" : (pbo_active_ ? "PBO fallback" : "sync fallback")
+		);
+		fflush(stdout);
+	}
+#endif
 
 	if (interop_available_) {
 		// Wait for GL blit to complete before D3D11 reads the interop texture
