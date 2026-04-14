@@ -1,6 +1,6 @@
 # extension-video-export
 
-[![Build](https://img.shields.io/github/actions/workflow/status/soccertutor/extension-video-export/build.yml)](https://github.com/soccertutor/extension-video-export/actions/workflows/build.yml) [![Haxelib](https://img.shields.io/badge/haxelib-v0.3.8-blue)](https://lib.haxe.org/p/extension-video-export/) [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Build](https://img.shields.io/github/actions/workflow/status/soccertutor/extension-video-export/build.yml)](https://github.com/soccertutor/extension-video-export/actions/workflows/build.yml) [![Haxelib](https://img.shields.io/badge/haxelib-v0.3.9-blue)](https://lib.haxe.org/p/extension-video-export/) [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 Cross-platform H.264/MP4 video encoder for [OpenFL](https://www.openfl.org/) / hxcpp.
 
@@ -8,12 +8,12 @@ Encode `BitmapData` frames into an MP4 file using native platform APIs — no ex
 
 ## Platform backends
 
-| Platform    | Backend                          | Notes                                            |
-| ----------- | -------------------------------- | ------------------------------------------------ |
-| macOS / iOS | AVFoundation (AVAssetWriter)     | BGRA direct, GPU path (IOSurface + Metal copy)   |
-| Windows     | Media Foundation (IMFSinkWriter) | BGRA direct, GPU path (PBO readback)             |
-| Android     | NDK AMediaCodec + AMediaMuxer    | BGRA to NV12, GPU path (EGL surface input)       |
-| Linux       | OpenH264 + minimp4               | BGRA to I420                                     |
+| Platform    | Backend                          | Notes                                          |
+| ----------- | -------------------------------- | ---------------------------------------------- |
+| macOS / iOS | AVFoundation (AVAssetWriter)     | BGRA direct, GPU path (IOSurface + Metal copy) |
+| Windows     | Media Foundation (IMFSinkWriter) | BGRA direct, GPU path (PBO readback)           |
+| Android     | NDK AMediaCodec + AMediaMuxer    | BGRA to NV12, GPU path (EGL surface input)     |
+| Linux       | OpenH264 + minimp4               | BGRA to I420                                   |
 
 ## Minimum platform versions
 
