@@ -90,10 +90,11 @@ jobs:
           restore-keys: haxelib-${{ matrix.target }}-
 
       - name: Install Haxe dependencies
+        shell: bash
         run: |
           haxelib setup ~/haxelib
-          curl -sL -o /tmp/hxcpp.zip https://github.com/HaxeFoundation/hxcpp/releases/download/v4.3.140/hxcpp-4.3.140.zip
-          haxelib install /tmp/hxcpp.zip --quiet
+          curl -sL -o "$RUNNER_TEMP/hxcpp.zip" https://github.com/HaxeFoundation/hxcpp/releases/download/v4.3.140/hxcpp-4.3.140.zip
+          haxelib install "$RUNNER_TEMP/hxcpp.zip" --quiet
           haxelib install lime --quiet
           haxelib dev extension-video-export .
 
