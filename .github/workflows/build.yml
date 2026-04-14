@@ -132,6 +132,10 @@ jobs:
         env:
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
 
+      - name: Build NDLL (iOS Simulator arm64)
+        if: matrix.target == 'ios'
+        run: cd project && haxelib run hxcpp Build.xml -Diphonesim -DHXCPP_ARM64 -DHXCPP_CPP11 -DMAC_USE_CURRENT_SDK=1 && cd ..
+
       - name: Compile functional test
         if: matrix.target != 'android' && matrix.target != 'ios'
         run: haxe test.hxml ${{ matrix.haxe_extra }}

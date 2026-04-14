@@ -3,9 +3,9 @@
   "url": "https://github.com/soccertutor/extension-video-export",
   "license": "MIT",
   "description": "Cross-platform H.264/MP4 video encoder for OpenFL/hxcpp",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "contributors": ["soccertutor", "AxGord"],
   "tags": ["openfl", "video", "encoder", "native"],
-  "releasenote": "Fix Android x86 build for emulator support",
+  "releasenote": "Add arm64 iOS Simulator build for Apple Silicon Macs",
   "dependencies": {}
 }
