@@ -93,7 +93,7 @@ jobs:
         shell: bash
         run: |
           haxelib setup ~/haxelib
-          curl -sL -o "$RUNNER_TEMP/hxcpp.zip" https://github.com/HaxeFoundation/hxcpp/releases/download/v4.3.140/hxcpp-4.3.140.zip
+          curl -sL -o "$RUNNER_TEMP/hxcpp.zip" https://github.com/soccertutor/hxcpp/releases/download/v4.3.141-iphonesim/hxcpp-4.3.141-iphonesim.zip
           haxelib install "$RUNNER_TEMP/hxcpp.zip" --quiet
           haxelib install lime --quiet
           haxelib dev extension-video-export .
